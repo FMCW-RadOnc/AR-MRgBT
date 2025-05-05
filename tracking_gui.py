@@ -17,9 +17,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
+from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QColorConstants, QColor
 from queue import Queue
-import cv2.dnn_superres
 import time
 
 
@@ -42,6 +41,13 @@ original_images = {0: None, 1: None}
 
 # Add gamma levels for adjustments
 gamma_levels = {0: 1.0, 1: 1.0}  # Default gamma values for left and right images
+
+# Maximum difference in mm allowed for a particular color to show on a given axis
+GREEN_THRESHOLD = 2
+YELLOW_THRESHOLD = 10
+
+# Dictionary to hold positional data from all coils
+coils = {}
 
 
 # Function to check if the Access-i server is active
@@ -103,7 +109,7 @@ def get_session_id():
 
 # Function to enable WebSocket messages for the image service
 def enable_websocket_messages(session_id):
-    service = "Image"
+    service = "tracking"
     enable_url = f"{BASE_URL}/{service}/connectServiceToDefaultWebSocket?sessionId={session_id}"
     try:
         response = requests.post(enable_url, verify=False)
@@ -134,52 +140,21 @@ def apply_gamma_correction(image, gamma):
     table = np.array([(i / 255.0) ** inv_gamma * 255 for i in range(256)]).astype("uint8")
     return cv2.LUT(image, table)
 
+# TODO: Add helper function that calculates color given desired and actual position data for an axis
+def get_color(desired, actual) -> QColor:
+    abs_diff = abs(desired-actual)
+    if abs_diff <= GREEN_THRESHOLD:
+        return QColorConstants.Green
+    elif abs_diff <= YELLOW_THRESHOLD:
+        return QColorConstants.Yellow
+    else:
+        return QColorConstants.Red
 
 class CustomMainWindow(QMainWindow):
     def __init__(self):
         super(CustomMainWindow, self).__init__()
-
-        self.setWindowTitle("TLv")
-
-        # Create FRAME_A
-        self.FRAME_A = QFrame(self)
-        self.FRAME_A.setStyleSheet("background-color: black;")
-        self.LAYOUT_A = QGridLayout()
-        self.LAYOUT_A.setContentsMargins(0, 0, 0, 0)  # Remove margins
-        self.LAYOUT_A.setSpacing(0)  # Remove spacing between widgets
-        self.FRAME_A.setLayout(self.LAYOUT_A)
-        self.setCentralWidget(self.FRAME_A)
-
-        # Setup window with two labels to display images
-        self.label_left = QLabel(self)
-        self.label_right = QLabel(self)
-
-        # Set size policy for the labels to expand dynamically
-        self.label_left.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self.label_right.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-
-        # Set background color of labels to black
-        self.label_left.setStyleSheet("background-color: black;")
-        self.label_right.setStyleSheet("background-color: black;")
-
-        # Add the labels to the layout without alignment to allow stretching
-        self.LAYOUT_A.addWidget(self.label_left, 0, 0)
-        self.LAYOUT_A.addWidget(self.label_right, 0, 1)
-
-        # Brightness, contrast, and gamma levels for left and right images
-        self.brightness_levels = {0: 0.0, 1: 0.0}  # 0 means no change
-        self.contrast_levels = {0: 1.0, 1: 1.0}    # 1.0 means no change
-        self.gamma_levels = {0: 1.0, 1: 1.0}       # Default gamma values
-
-        # State variables for adjustment modes
-        self.brightness_mode = False  # True when in brightness adjustment mode
-        self.contrast_mode = False    # True when in contrast adjustment mode
-        self.gamma_mode = False       # True when in gamma adjustment mode
-        self.selected_image = None    # 0 for left, 1 for right
+        # TODO: Redo GUI
+        self.setWindowTitle("Tracking-AR")
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -205,242 +180,43 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
 
-    # Key press event handler to adjust brightness, contrast, and gamma
-    def keyPressEvent(self, event: QKeyEvent):
-        key = event.key()
-        print(f"Key pressed: {key}")
-        if key == Qt.Key.Key_Escape:
-            self.close()
-        elif key == Qt.Key.Key_B:
-            # Toggle brightness adjustment mode
-            self.brightness_mode = not self.brightness_mode
-            self.contrast_mode = False
-            self.gamma_mode = False
-            print("Brightness mode toggled.")
-        elif key == Qt.Key.Key_C:
-            # Toggle contrast adjustment mode
-            self.contrast_mode = not self.contrast_mode
-            self.brightness_mode = False
-            self.gamma_mode = False
-            print("Contrast mode toggled.")
-        elif key == Qt.Key.Key_I:
-            # Toggle gamma adjustment mode
-            self.gamma_mode = not self.gamma_mode
-            self.brightness_mode = False
-            self.contrast_mode = False
-            print("Gamma mode toggled.")
-        elif self.brightness_mode or self.contrast_mode or self.gamma_mode:
-            if key == Qt.Key.Key_L:
-                self.selected_image = 0
-                print("Selected left image for adjustment.")
-            elif key == Qt.Key.Key_R:
-                self.selected_image = 1
-                print("Selected right image for adjustment.")
-            elif self.selected_image is not None:
-                if key == Qt.Key.Key_Up:
-                    # Increase adjustment
-                    if self.brightness_mode:
-                        self.adjust_brightness(self.selected_image, 10)
-                    elif self.contrast_mode:
-                        self.adjust_contrast(self.selected_image, 0.1)
-                    elif self.gamma_mode:
-                        self.adjust_gamma(self.selected_image, 0.1)
-                elif key == Qt.Key.Key_Down:
-                    # Decrease adjustment
-                    if self.brightness_mode:
-                        self.adjust_brightness(self.selected_image, -10)
-                    elif self.contrast_mode:
-                        self.adjust_contrast(self.selected_image, -0.1)
-                    elif self.gamma_mode:
-                        self.adjust_gamma(self.selected_image, -0.1)
-
-    def adjust_brightness(self, index, delta):
-        # Update brightness level
-        self.brightness_levels[index] += delta
-        self.brightness_levels[index] = max(-100, min(self.brightness_levels[index], 100))
-        print(f"Brightness level for image {index}: {self.brightness_levels[index]}")
-        if original_images[index] is not None:
-            self.update_image(original_images[index], index)
-
-    def adjust_contrast(self, index, delta):
-        # Update contrast level
-        self.contrast_levels[index] += delta
-        self.contrast_levels[index] = max(0.1, min(self.contrast_levels[index], 3.0))
-        print(f"Contrast level for image {index}: {self.contrast_levels[index]}")
-        if original_images[index] is not None:
-            self.update_image(original_images[index], index)
-
-    def adjust_gamma(self, index, delta):
-        # Update gamma level
-        self.gamma_levels[index] += delta
-        self.gamma_levels[index] = max(0.1, self.gamma_levels[index])
-        print(f"Gamma level for image {index}: {self.gamma_levels[index]}")
-        if original_images[index] is not None:
-            self.update_image(original_images[index], index)
-
-    def update_image(self, image_array, index):
-        """
-        Update the displayed image in the QLabel using OpenCV with enhanced quality.
-        """
-        try:
-            # Store original image
-            original_images[index] = image_array.copy()
-
-            # Normalize to 8-bit grayscale or color (to maintain precision)
-            if image_array.dtype != np.uint8:
-                image_array = cv2.normalize(
-                    image_array, None, 0, 255, cv2.NORM_MINMAX
-                ).astype(np.uint8)
-
-            # Adjust contrast and brightness
-            alpha = self.contrast_levels[index]  # Contrast control
-            beta = self.brightness_levels[index]  # Brightness control
-            image_array = cv2.convertScaleAbs(image_array, alpha=alpha, beta=beta)
-
-            # Apply sharpening filter for better details
-            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-            enhanced_image = cv2.filter2D(image_array, -1, kernel)
-
-            # Apply gamma correction
-            gamma = self.gamma_levels[index]
-            image_array = apply_gamma_correction(image_array, gamma)
-
-            # Convert grayscale to RGB
-            if len(image_array.shape) == 2:  # Grayscale image
-                image_rgb = cv2.cvtColor(image_array, cv2.COLOR_GRAY2RGB)
-            elif len(image_array.shape) == 3 and image_array.shape[2] == 1:
-                # Single-channel image
-                image_rgb = cv2.cvtColor(image_array, cv2.COLOR_GRAY2RGB)
-            elif len(image_array.shape) == 3 and image_array.shape[2] == 3:
-                # Already RGB
-                image_rgb = image_array
-            else:
-                print(f"Unsupported image shape: {image_array.shape}")
-                return
-
-            # Get the target label based on index
-            if index == 0:
-                label = self.label_left
-            elif index == 1:
-                label = self.label_right
-            else:
-                print(f"Invalid index: {index}")
-                return
-
-            # Get the size of the label
-            label_width = label.width()
-            label_height = label.height()
-            print(f"Label size: width={label_width}, height={label_height}")
-
-            # Ensure label dimensions are positive
-            if label_width <= 0 or label_height <= 0:
-                print(f"Label size is invalid: width={label_width}, height={label_height}")
-                return
-
-            # Get original image size
-            img_height, img_width = image_rgb.shape[:2]
-
-            # Compute scaling factor while maintaining aspect ratio
-            width_ratio = label_width / img_width
-            height_ratio = label_height / img_height
-
-            # Use max to scale up the image to fill the label
-            scaling_factor = max(width_ratio, height_ratio)
-            print(f"Scaling factor: {scaling_factor}")
-
-            # Ensure scaling_factor is positive
-            if scaling_factor <= 0:
-                print(f"Invalid scaling factor: {scaling_factor}")
-                return
-
-            # Compute new size
-            new_width = max(1, int(img_width * scaling_factor))
-            new_height = max(1, int(img_height * scaling_factor))
-
-            # Resize image
-            image_rgb_resized = cv2.resize(
-                image_rgb, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4
-            )
-
-            # Crop the image to fit the label size
-            x_offset = (new_width - label_width) // 2 if new_width > label_width else 0
-            y_offset = (new_height - label_height) // 2 if new_height > label_height else 0
-            image_cropped = image_rgb_resized[
-                y_offset:y_offset + label_height,
-                x_offset:x_offset + label_width
-            ]
-
-            # Convert the cropped image to QImage
-            height, width, channel = image_cropped.shape
-            bytes_per_line = channel * width
-
-            # Convert the image data to bytes
-            image_bytes = image_cropped.tobytes()
-
-            # Create QImage from bytes
-            q_img = QImage(
-                image_bytes,
-                width,
-                height,
-                bytes_per_line,
-                QImage.Format.Format_RGB888,
-            )
-
-            # Convert QImage to QPixmap
-            pixmap = QPixmap.fromImage(q_img)
-
-            # Set the pixmap to the label
-            label.setPixmap(pixmap)
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        except Exception as e:
-            print(f"An error occurred in update_image: {e}")
 
 class Communicate(QObject):
     data_signal = pyqtSignal(np.ndarray, int)
 
-# WebSocket-based function to process the image data
-def process_image_data(value):
-    global image_counter, last_image_time  # Access global variables
+def process_tracking_data(data):
+    global coils
 
-    if value is None:
+    if data is None:
         print("Received NoneType value, skipping processing.")
         return
+    
+    """
+        1) Iterate through <coils> vector
+            a) Iterate through <projections> vector
+                i) Access positional data in coordinates/dcs
+    """
+    # TODO: Check how many coils/projections there should typically be and how to use them
+    coils = {}
+    for coil in data.get("coils"):
+        coil_name = coil.get("name")
+        projs = {}
+        for proj in coil.get("projections"):
+            proj_name = proj.get("name")
 
-    # Check if there's a significant pause in receiving images
-    current_time = time.time()
-    if last_image_time is not None and (current_time - last_image_time > image_pause_threshold):
-        print("Pause detected in receiving images. Resetting counter.")
-        image_counter = 0  # Reset the counter
+            # TODO: Confirm whether to use dcs or pcs. Going with pcs for now
+            
+            orientation = proj.get("coordinates", {}).get("pcs", {}).get("orientation")
+            orientation_sag = orientation.get("sag")
+            orientation_cor = orientation.get("cor")
+            orientation_tra = orientation.get("tra")
+            center_position = proj.get("coordinates", {}).get("pcs", {}).get("centerPosition")
+            center_position_sag = center_position.get("sag")
+            center_position_cor = center_position.get("cor")
+            center_position_tra = center_position.get("tra")
+            projs[proj_name] = (orientation_sag, orientation_cor, orientation_tra, center_position_sag, center_position_cor, center_position_tra)
+        coils[coil_name] = projs
 
-    # Update the last image time
-    last_image_time = current_time
-
-    image_format = value.get("image", {}).get("format", "dicom")
-    image_data_base64 = value.get("image", {}).get("data")
-
-    if image_data_base64:
-        image_data_byte = base64.b64decode(image_data_base64)
-
-        if image_format == "dicom":
-            dicom_file = BytesIO(image_data_byte)
-            dicom_img = pydicom.dcmread(dicom_file)
-
-            # Ensure pixel array is of correct type
-            image_array = dicom_img.pixel_array
-            print(
-                f"Image shape: {image_array.shape}, dtype: {image_array.dtype}"
-            )  # Debug info
-
-            # Add image and counter to the queue
-            image_queue.put((image_array, image_counter % 2))  # 0 for left, 1 for right
-            image_counter += 1  # Increment the counter
-
-        else:
-            print(f"Unsupported image format: {image_format}")
-    else:
-        print("No image data found in the message.")
-
-# WebSocket event handlers
 def on_message(ws, message):
     try:
         if isinstance(message, bytes):
@@ -450,20 +226,14 @@ def on_message(ws, message):
             service = data.get("service")
             response = data.get("response", {})
             value = response.get("value")
-
-            if service == "product/image":
-                print("Received an image message via WebSocket.")
-                process_image_data(value)
-            else:
-                print(
-                    f"WebSocket Message from {service}: {json.dumps(response, indent=4)}"
-                )
-                process_image_data(value)
+            if service == "product/tracking":
+                print("Received a tracking message via WebSocket")
+                process_tracking_data(value)
     except json.JSONDecodeError:
         print(f"Received non-JSON message: {message}")
     except Exception as e:
         print(f"An error occurred in on_message: {e}")
-
+        
 def on_error(ws, error):
     print(f"WebSocket error: {error}")
 
@@ -498,15 +268,6 @@ def connect_websocket(session_id):
     wst.daemon = True
     wst.start()
 
-# Function to process the image queue and emit the signal
-def process_image_queue():
-    if not image_queue.empty():
-        # Retrieve the image and the index (0 for left, 1 for right)
-        image_array, index = image_queue.get()
-
-        # Update the image on the corresponding label (left or right)
-        comm.data_signal.emit(image_array, index)
-
 # Main process
 if __name__ == "__main__":
     if not is_server_active():
@@ -529,11 +290,6 @@ if __name__ == "__main__":
 
         # Enable WebSocket messages for the image service
         enable_websocket_messages(session_id)
-
-    # Use QTimer to periodically process the image queue
-    timer = QTimer()
-    timer.timeout.connect(process_image_queue)
-    timer.start(100)  # Update every 100 milliseconds
 
     # Start the Qt event loop
     app.exec()
