@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QColorConstants, QColor
+from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QColorConstants, QColor,QPainter,QPen
 from queue import Queue
 import time
 
@@ -44,6 +44,12 @@ gamma_levels = {0: 1.0, 1: 1.0}  # Default gamma values for left and right image
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
+
+# Test data (Placeholder, will use data from coils eventually)
+desired_positions = 0,0,0
+actual_positions = 0,-1,15
+
+max_diff = 30 # Measurement differences are capped at this value in either direction
 
 # Dictionary to hold positional data from all coils
 coils = {}
@@ -140,12 +146,18 @@ def get_color(desired, actual) -> QColor:
         return QColorConstants.Yellow
     else:
         return QColorConstants.Red
-
+    
 class CustomMainWindow(QMainWindow):
     def __init__(self):
         super(CustomMainWindow, self).__init__()
-        # TODO: Redo GUI
-        self.setWindowTitle("Tracking-AR")
+        
+        # Make the window transparent
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        # Pens used for painting the rectangles
+        self.background_pen = QPen(QColorConstants.Black,1.0)
+        self.foreground_pen = QPen(QColorConstants.DarkBlue,5.0)
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -171,6 +183,58 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
 
+    def paintRect(self,painter : QPainter,x1,x2,y1,y2,desired,actual,is_vertical=True):
+        painter.setPen(self.background_pen)
+        painter.setBrush(QColorConstants.White)
+        painter.drawRect(x1,y1,x2-x1,y2-y1)
+        l_color = get_color(desired, actual)
+        painter.setPen(self.foreground_pen)
+        painter.setBrush(l_color)
+        if is_vertical:
+            center_y = y1 + (y2-y1) / 2
+            actual_pos_y = center_y + max(min(desired-actual, max_diff), -max_diff) / max_diff * (y2-y1) / 2
+            painter.drawRect(x1, int(min(center_y, actual_pos_y)), x2-x1, int(max(center_y, actual_pos_y))-int(min(center_y, actual_pos_y)))
+        else:
+            center_x = x1 + (x2-x1) / 2
+            actual_pos_x = center_x - max(min(desired - actual, max_diff), -max_diff) / max_diff * (x2-x1) / 2
+            painter.drawRect(int(min(center_x, actual_pos_x)), y1, int(max(center_x, actual_pos_x))-int(min(center_x, actual_pos_x)), y2-y1)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        
+        width, height = self.size().width(), self.size().height()
+
+        tile_w, tile_h = (int(width / 32), int(height / 32))
+
+        """
+            Current Approach:
+            - 1/32th of the screen margins
+            - 1/8th of the screen corners
+            - rectangles are 1/16th of the screen wide
+            - Middle of rectangles are correct, actual and correct are both blue lines
+        """
+
+        # Left rectangle
+        l_rect_x1 = tile_w
+        l_rect_x2 = tile_w*3
+        l_rect_y1 = tile_h
+        l_rect_y2 = height - tile_h*3
+        self.paintRect(painter,l_rect_x1,l_rect_x2,l_rect_y1,l_rect_y2,desired_positions[0],actual_positions[0])
+
+        # Right rectangle
+        r_rect_x1 = width - tile_w*3
+        r_rect_x2 = width - tile_w
+        r_rect_y1 = tile_h
+        r_rect_y2 = height - tile_h*3
+        self.paintRect(painter,r_rect_x1,r_rect_x2,r_rect_y1,r_rect_y2,desired_positions[1],actual_positions[1])
+        
+        # Bottom rectangle
+        b_rect_x1 = tile_w*3
+        b_rect_x2 = width - tile_w*3
+        b_rect_y1 = height - tile_h*3
+        b_rect_y2 = height - tile_h
+        self.paintRect(painter,b_rect_x1,b_rect_x2,b_rect_y1,b_rect_y2,desired_positions[2],actual_positions[2],is_vertical=False)
+        
 def process_tracking_data(data):
     global coils
 
