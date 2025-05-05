@@ -3,43 +3,13 @@ import ssl
 import json
 import requests
 import threading
-import base64
-import pydicom
-from io import BytesIO
-import numpy as np
-from PyQt6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QFrame,
-    QGridLayout,
-    QLabel,
-    QSizePolicy,
-)
-from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap, QKeyEvent, QColorConstants, QColor,QPainter,QPen
-from queue import Queue
-import time
-
+from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen
 
 # URLs for the image service
 BASE_URL = "https://10.243.146.24:7787/SRC/v2/product"
 WEBSOCKET_URL = "wss://10.243.146.24:7788/SRC"
-
-# Global variables for tracking time
-last_image_time = None  # Timestamp of the last received image
-image_pause_threshold = 5  # Pause threshold in seconds
-
-# Queue to store images for thread-safe updates
-image_queue = Queue()
-
-# Global image counter for alternating between left and right
-image_counter = 0
-
-# Store original images for adjustments
-original_images = {0: None, 1: None}
-
-# Add gamma levels for adjustments
-gamma_levels = {0: 1.0, 1: 1.0}  # Default gamma values for left and right images
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -137,7 +107,7 @@ def enable_websocket_messages(session_id):
             f"An error occurred while enabling WebSocket messages for service {service}: {e}"
         )
 
-# TODO: Add helper function that calculates color given desired and actual position data for an axis
+# Helper function that calculates color given desired and actual position data for an axis
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
     if abs_diff <= GREEN_THRESHOLD:
@@ -205,14 +175,6 @@ class CustomMainWindow(QMainWindow):
         width, height = self.size().width(), self.size().height()
 
         tile_w, tile_h = (int(width / 32), int(height / 32))
-
-        """
-            Current Approach:
-            - 1/32th of the screen margins
-            - 1/8th of the screen corners
-            - rectangles are 1/16th of the screen wide
-            - Middle of rectangles are correct, actual and correct are both blue lines
-        """
 
         # Left rectangle
         l_rect_x1 = tile_w
