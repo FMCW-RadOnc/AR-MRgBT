@@ -7,7 +7,6 @@ import base64
 import pydicom
 from io import BytesIO
 import numpy as np
-import cv2
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -49,6 +48,13 @@ YELLOW_THRESHOLD = 10
 # Dictionary to hold positional data from all coils
 coils = {}
 
+"""
+    TODO: Answer these: 
+    - In what way are we receiving correction information? 
+    - At what rate do we receive position information?
+    - Do we use multiple coils and projections per coil or just one? If there's multiple, how is the correction data connected?
+    - Are we only concerning ourselves with the center position of the coil or is orientation also relevant?
+"""
 
 # Function to check if the Access-i server is active
 def is_server_active():
@@ -125,21 +131,6 @@ def enable_websocket_messages(session_id):
             f"An error occurred while enabling WebSocket messages for service {service}: {e}"
         )
 
-
-# Function to apply gamma correction
-def apply_gamma_correction(image, gamma):
-    """
-    Apply gamma correction to an image.
-    Args:
-        image (numpy.ndarray): Input image.
-        gamma (float): Gamma value (>1 darkens, <1 brightens).
-    Returns:
-        numpy.ndarray: Gamma-corrected image.
-    """
-    inv_gamma = 1.0 / gamma
-    table = np.array([(i / 255.0) ** inv_gamma * 255 for i in range(256)]).astype("uint8")
-    return cv2.LUT(image, table)
-
 # TODO: Add helper function that calculates color given desired and actual position data for an axis
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
@@ -179,10 +170,6 @@ class CustomMainWindow(QMainWindow):
         super(CustomMainWindow, self).showEvent(event)
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
-
-
-class Communicate(QObject):
-    data_signal = pyqtSignal(np.ndarray, int)
 
 def process_tracking_data(data):
     global coils
@@ -278,10 +265,6 @@ if __name__ == "__main__":
 
     # Create the main GUI window
     window = CustomMainWindow()
-
-    # Create an instance of Communicate for thread-safe signals
-    comm = Communicate()
-    comm.data_signal.connect(window.update_image)
 
     session_id = get_session_id()
     if session_id:
