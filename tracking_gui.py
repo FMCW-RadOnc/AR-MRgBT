@@ -41,6 +41,12 @@ max_diff = 30 # Measurement differences are capped at this value in either direc
 # Dictionary to hold positional data from all coils
 coils = {}
 
+# Set of coil names that have given data recently
+active_coils = set()
+
+# Seconds between each combobox check
+combobox_update_frequency = 1 
+
 """
     TODO: Answer these: 
     - In what way are we receiving correction information? 
@@ -197,7 +203,8 @@ class CustomMainWindow(QMainWindow):
         self.coil_combobox.addItems(coil_names)
         self.coil_combobox.setFont(QFont('Arial', 20))
         self.coil_combobox.activated.connect(self.current_text)
-        self.current_coil = coil_names[0]
+        self.combobox_coil_set = set()
+        self.current_coil = None
         
 
         self.left_axis = AxisVisual(is_vertical=True)
@@ -219,7 +226,25 @@ class CustomMainWindow(QMainWindow):
         self.show()
 
     def update_coils(self):
-        pass
+        """
+        Every so often, check which coils have been actively sending tracking data.
+        Remove all coils that have not sent tracking data recently (ignoring the current coil).
+        Add/keep all coils that have.
+        """
+        for i in range(self.coil_combobox.count()):
+            if self.coil_combobox.currentIndex() == i:
+                continue
+            coil = self.coil_combobox.itemText(i)
+            if coil not in active_coils:
+                self.combobox_coil_set.remove(coil)
+                self.coil_combobox.removeItem(i)
+
+        for coil in active_coils:
+            if coil not in self.combobox_coil_set:
+                self.combobox_coil_set.add(coil)
+                self.coil_combobox.addItem(coil)
+
+        active_coils.clear()
 
     def update_axes(self):
         if self.coil_combobox.count() > 0:
@@ -230,6 +255,13 @@ class CustomMainWindow(QMainWindow):
             self.left_axis.set_desired(desired_positions[self.current_coil][0])
             self.right_axis.set_desired(desired_positions[self.current_coil][1])
             self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
+        else:
+            self.left_axis.set_actual(0)
+            self.right_axis.set_actual(0)
+            self.bottom_axis.set_actual(0)
+            self.left_axis.set_desired(0)
+            self.right_axis.set_desired(0)
+            self.bottom_axis.set_desired(0)
 
     def current_text(self, _):
         self.update_axes()
@@ -274,7 +306,7 @@ def process_tracking_data(data):
         center_position_y = center_position.get("y")
         center_position_z = center_position.get("z")
         coils[coil_name] = (center_position_x, center_position_y, center_position_z)
-
+        active_coils.add(coil_name)
 
 def on_message(ws, message):
     try:
