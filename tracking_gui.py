@@ -218,14 +218,18 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
+    def update_coils(self):
+        pass
+
     def update_axes(self):
-        self.current_coil = self.coil_combobox.currentText()
-        self.left_axis.set_actual(coil_positions[self.current_coil][0])
-        self.right_axis.set_actual(coil_positions[self.current_coil][1])
-        self.bottom_axis.set_actual(coil_positions[self.current_coil][2])
-        self.left_axis.set_desired(desired_positions[self.current_coil][0])
-        self.right_axis.set_desired(desired_positions[self.current_coil][1])
-        self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
+        if self.coil_combobox.count() > 0:
+            self.current_coil = self.coil_combobox.currentText()
+            self.left_axis.set_actual(coil_positions[self.current_coil][0])
+            self.right_axis.set_actual(coil_positions[self.current_coil][1])
+            self.bottom_axis.set_actual(coil_positions[self.current_coil][2])
+            self.left_axis.set_desired(desired_positions[self.current_coil][0])
+            self.right_axis.set_desired(desired_positions[self.current_coil][1])
+            self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
 
     def current_text(self, _):
         self.update_axes()
@@ -264,19 +268,12 @@ def process_tracking_data(data):
     coils = {}
     for coil in data.get("coils"):
         coil_name = coil.get("name")
-        projs = {}
-        for proj in coil.get("projections"):
-            proj_name = proj.get("name") 
-            orientation = proj.get("coordinates", {}).get("dcs", {}).get("orientation")
-            orientation_x = orientation.get("x")
-            orientation_y = orientation.get("y")
-            orientation_z = orientation.get("z")
-            center_position = proj.get("coordinates", {}).get("dcs", {}).get("centerPosition")
-            center_position_x = center_position.get("x")
-            center_position_y = center_position.get("y")
-            center_position_z = center_position.get("z")
-            projs[proj_name] = (orientation_x, orientation_y, orientation_z, center_position_x, center_position_y, center_position_z)
-        coils[coil_name] = projs
+        proj = coil.get("projections")[0]
+        center_position = proj.get("coordinates", {}).get("dcs", {}).get("centerPosition")
+        center_position_x = center_position.get("x")
+        center_position_y = center_position.get("y")
+        center_position_z = center_position.get("z")
+        coils[coil_name] = (center_position_x, center_position_y, center_position_z)
 
 
 def on_message(ws, message):
