@@ -268,14 +268,14 @@ def process_tracking_data(data):
         for proj in coil.get("projections"):
             proj_name = proj.get("name") 
             orientation = proj.get("coordinates", {}).get("dcs", {}).get("orientation")
-            orientation_sag = orientation.get("sag")
-            orientation_cor = orientation.get("cor")
-            orientation_tra = orientation.get("tra")
+            orientation_x = orientation.get("x")
+            orientation_y = orientation.get("y")
+            orientation_z = orientation.get("z")
             center_position = proj.get("coordinates", {}).get("dcs", {}).get("centerPosition")
-            center_position_sag = center_position.get("sag")
-            center_position_cor = center_position.get("cor")
-            center_position_tra = center_position.get("tra")
-            projs[proj_name] = (orientation_sag, orientation_cor, orientation_tra, center_position_sag, center_position_cor, center_position_tra)
+            center_position_x = center_position.get("x")
+            center_position_y = center_position.get("y")
+            center_position_z = center_position.get("z")
+            projs[proj_name] = (orientation_x, orientation_y, orientation_z, center_position_x, center_position_y, center_position_z)
         coils[coil_name] = projs
 
 
