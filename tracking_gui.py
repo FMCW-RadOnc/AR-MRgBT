@@ -179,7 +179,7 @@ class CustomMainWindow(QMainWindow):
 
         self.coil_combobox = QComboBox()
         self.coil_combobox.setFont(QFont('Arial', 20))
-        self.coil_combobox.activated.connect(self.current_text)
+        self.coil_combobox.activated.connect(self.updated_text)
         self.combobox_coil_set = set()
         self.current_coil = None
         
@@ -211,7 +211,7 @@ class CustomMainWindow(QMainWindow):
             self.right_axis.set_desired(desired_positions[self.current_coil][1])
             self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
 
-    def current_text(self, _):
+    def updated_text(self, _):
         self.current_coil = self.coil_combobox.currentText()
         if self.current_coil in self.coils:
             x,y,z = self.coils[self.current_coil]
