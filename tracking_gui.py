@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QFrame
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 
 # URLs for the image service
@@ -22,14 +22,7 @@ WEBSOCKET_URL = "wss://10.243.146.24:7788/SRC"
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
 
-# Test data (Placeholder, will use data from coils eventually)
-coil_names = ["coil1", "coil2", "coil3"]
-coil_positions = {
-    "coil1" : (0,-1,15),
-    "coil2" : (2,5,23),
-    "coil3" : (100,0,0)
-}
-
+# Test data (Placeholder, will use real imported data later)
 desired_positions = {
     "coil1" : (0,0,0),
     "coil2" : (3,4,20),
@@ -37,23 +30,6 @@ desired_positions = {
 }
 
 max_diff = 30 # Measurement differences are capped at this value in either direction
-
-# Dictionary to hold positional data from all coils
-coils = {}
-
-# Set of coil names that have given data recently
-active_coils = set()
-
-# Seconds between each combobox check
-combobox_update_frequency = 1 
-
-"""
-    TODO: Answer these: 
-    - In what way are we receiving correction information? 
-    - At what rate do we receive position information?
-    - Do we use multiple coils and projections per coil or just one? If there's multiple, how is the correction data connected?
-    - Are we only concerning ourselves with the center position of the coil or is orientation also relevant?
-"""
 
 # Function to check if the Access-i server is active
 def is_server_active():
@@ -199,14 +175,14 @@ class CustomMainWindow(QMainWindow):
         frame.setLayout(layout)
         self.setCentralWidget(frame)
 
+        self.coils = {}
+
         self.coil_combobox = QComboBox()
-        self.coil_combobox.addItems(coil_names)
         self.coil_combobox.setFont(QFont('Arial', 20))
         self.coil_combobox.activated.connect(self.current_text)
         self.combobox_coil_set = set()
         self.current_coil = None
         
-
         self.left_axis = AxisVisual(is_vertical=True)
         self.right_axis = AxisVisual(is_vertical=True)
         self.bottom_axis = AxisVisual(is_vertical=False)
@@ -215,9 +191,6 @@ class CustomMainWindow(QMainWindow):
         layout.addWidget(self.bottom_axis,20,1,1,19)
         layout.addWidget(self.left_axis,1,0,19,1)
         layout.addWidget(self.right_axis,1,20,19,1)
-        
-
-        self.update_axes()
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -225,46 +198,29 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
-    def update_coils(self):
-        """
-        Every so often, check which coils have been actively sending tracking data.
-        Remove all coils that have not sent tracking data recently (ignoring the current coil).
-        Add/keep all coils that have.
-        """
-        for i in range(self.coil_combobox.count()):
-            if self.coil_combobox.currentIndex() == i:
-                continue
-            coil = self.coil_combobox.itemText(i)
-            if coil not in active_coils:
-                self.combobox_coil_set.remove(coil)
-                self.coil_combobox.removeItem(i)
-
-        for coil in active_coils:
-            if coil not in self.combobox_coil_set:
-                self.combobox_coil_set.add(coil)
-                self.coil_combobox.addItem(coil)
-
-        active_coils.clear()
-
-    def update_axes(self):
-        if self.coil_combobox.count() > 0:
-            self.current_coil = self.coil_combobox.currentText()
-            self.left_axis.set_actual(coil_positions[self.current_coil][0])
-            self.right_axis.set_actual(coil_positions[self.current_coil][1])
-            self.bottom_axis.set_actual(coil_positions[self.current_coil][2])
+    def update_coil(self,coil_name,x,y,z):
+        self.coils[coil_name] = (x,y,z)
+        if coil_name not in self.combobox_coil_set:
+            self.combobox_coil_set.add(coil_name)
+            self.coil_combobox.addItem(coil_name)
+        if self.current_coil == coil_name:
+            self.left_axis.set_actual(x)
+            self.right_axis.set_actual(y)
+            self.bottom_axis.set_actual(z)
             self.left_axis.set_desired(desired_positions[self.current_coil][0])
             self.right_axis.set_desired(desired_positions[self.current_coil][1])
             self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
-        else:
-            self.left_axis.set_actual(0)
-            self.right_axis.set_actual(0)
-            self.bottom_axis.set_actual(0)
-            self.left_axis.set_desired(0)
-            self.right_axis.set_desired(0)
-            self.bottom_axis.set_desired(0)
 
     def current_text(self, _):
-        self.update_axes()
+        self.current_coil = self.coil_combobox.currentText()
+        if self.current_coil in self.coils:
+            x,y,z = self.coils[self.current_coil]
+            self.left_axis.set_actual(x)
+            self.right_axis.set_actual(y)
+            self.bottom_axis.set_actual(z)
+            self.left_axis.set_desired(desired_positions[self.current_coil][0])
+            self.right_axis.set_desired(desired_positions[self.current_coil][1])
+            self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -284,29 +240,23 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
         
-def process_tracking_data(data):
-    global coils
+class Communicate(QObject):
+    # For simplicity, a signal will just be a str and 3 ints: the coil name and its x,y,z coordinates in dcs
+    data_signal = pyqtSignal(str, int, int, int)
 
+def process_tracking_data(data):
     if data is None:
         print("Received NoneType value, skipping processing.")
         return
     
-    """
-        1) Iterate through <coils> vector
-            a) Iterate through <projections> vector
-                i) Access positional data in coordinates/dcs
-    """
-    # TODO: Check how many coils/projections there should typically be and how to use them
-    coils = {}
     for coil in data.get("coils"):
         coil_name = coil.get("name")
-        proj = coil.get("projections")[0]
+        proj = coil.get("projections")[0] # Only using 1 projection for now
         center_position = proj.get("coordinates", {}).get("dcs", {}).get("centerPosition")
         center_position_x = center_position.get("x")
         center_position_y = center_position.get("y")
         center_position_z = center_position.get("z")
-        coils[coil_name] = (center_position_x, center_position_y, center_position_z)
-        active_coils.add(coil_name)
+        comm.data_signal.emit(coil_name, center_position_x, center_position_y, center_position_z)
 
 def on_message(ws, message):
     try:
@@ -369,6 +319,9 @@ if __name__ == "__main__":
 
     # Create the main GUI window
     window = CustomMainWindow()
+
+    comm = Communicate()
+    comm.data_signal.connect(window.update_coil)
 
     session_id = get_session_id()
     if session_id:
