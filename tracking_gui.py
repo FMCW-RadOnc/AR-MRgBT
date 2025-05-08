@@ -242,7 +242,7 @@ class CustomMainWindow(QMainWindow):
         
 class Communicate(QObject):
     # For simplicity, a signal will just be a str and 3 ints: the coil name and its x,y,z coordinates in dcs
-    data_signal = pyqtSignal(str, int, int, int)
+    data_signal = pyqtSignal(str, float, float, float)
 
 def process_tracking_data(data):
     if data is None:
