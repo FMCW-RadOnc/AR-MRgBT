@@ -106,10 +106,6 @@ class CustomMainWindow(QMainWindow):
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
-        # Pens used for painting the rectangles
-        self.background_pen = QPen(QColorConstants.Black,2.0)
-        self.foreground_pen = QPen(QColorConstants.DarkBlue,5.0)
-
         layout = QGridLayout()
         frame = QFrame(self)
         frame.setLayout(layout)

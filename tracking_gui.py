@@ -9,10 +9,13 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QComboBox,
     QGridLayout,
-    QFrame
+    QFrame,
+    QLabel
 )
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
+
+import math
 
 # URLs for the image service
 BASE_URL = "https://10.243.146.24:7787/SRC/v2/product"
@@ -24,9 +27,9 @@ YELLOW_THRESHOLD = 10
 
 # Test data (Placeholder, will use real imported data later)
 desired_positions = {
-    "coil1" : (0,0,0),
-    "coil2" : (3,4,20),
-    "coil3" : (90, 10, 15)
+    "needle1" : (0,0,0),
+    "needle2" : (3,4,20),
+    "needle3" : (90, 10, 15)
 }
 
 max_diff = 30 # Measurement differences are capped at this value in either direction
@@ -106,7 +109,6 @@ def enable_websocket_messages(session_id):
             f"An error occurred while enabling WebSocket messages for service {service}: {e}"
         )
 
-# Helper function that calculates color given desired and actual position data for an axis
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
     if abs_diff <= GREEN_THRESHOLD:
@@ -116,12 +118,18 @@ def get_color(desired, actual) -> QColor:
     else:
         return QColorConstants.Red
     
+# Returns a float between -1.0 and 1.0, where 0 is in the center of the axis, -1 is on the bottom/left, and 1 is on the top/right
+def get_relative_position(desired, actual):
+    abs_diff = abs(desired-actual)
+    rp_capped = math.log2(min(abs_diff, max_diff)+1) / math.log2(max_diff+1)
+    return rp_capped if desired > actual else -rp_capped
+
 class AxisVisual(QWidget):
     def __init__(self, is_vertical, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.is_vertical = is_vertical
-        self.background_pen = QPen(QColorConstants.Black,1.0)
-        self.foreground_pen = QPen(QColorConstants.DarkBlue,5.0)
+        self.background_pen = QPen(QColorConstants.White,1.0)
+        self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = 0
         self.desired = 0
 
@@ -139,58 +147,89 @@ class AxisVisual(QWidget):
         painter.setBrush(QColorConstants.White)
         painter.drawRect(0,0,self.width(), self.height())
 
-        painter.setPen(self.foreground_pen)
-        painter.setBrush(get_color(self.desired, self.actual))
+        c = get_color(self.desired, self.actual)
+        painter.setPen(c)
+        painter.setBrush(c)
 
         if self.is_vertical:
             center_y = self.height() / 2
-            actual_pos_y = center_y + max(min(self.desired-self.actual, max_diff), -max_diff) / max_diff * center_y
+            actual_pos_y = center_y + get_relative_position(self.desired, self.actual) * center_y
             if center_y < actual_pos_y:
                 painter.drawRect(0,int(center_y),self.width(), int(actual_pos_y-center_y))
             else:
                 painter.drawRect(0,int(actual_pos_y),self.width(), int(center_y-actual_pos_y))
+            painter.setPen(self.middle_pen)
+            painter.drawLine(0, int(center_y), self.width(), int(center_y))
         else:
             center_x = self.width() / 2
-            actual_pos_x = center_x + max(min(self.desired-self.actual, max_diff), -max_diff) / max_diff * center_x
+            actual_pos_x = center_x + get_relative_position(self.desired, self.actual) * center_x
             if center_x < actual_pos_x:
                 painter.drawRect(int(center_x),0,int(actual_pos_x-center_x), self.height())
             else:
                 painter.drawRect(int(actual_pos_x),0,int(center_x-actual_pos_x), self.height())
+            painter.setPen(self.middle_pen)
+            painter.drawLine(int(center_x), 0, int(center_x), self.height())
 
 
 class CustomMainWindow(QMainWindow):
     def __init__(self):
         super(CustomMainWindow, self).__init__()
         
-        # Make the window transparent
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-
-        # Pens used for painting the rectangles
-        self.background_pen = QPen(QColorConstants.Black,1.0)
-        self.foreground_pen = QPen(QColorConstants.DarkBlue,5.0)
 
         layout = QGridLayout()
         frame = QFrame(self)
         frame.setLayout(layout)
         self.setCentralWidget(frame)
 
-        self.coils = {}
+        self.needles = {}
 
-        self.coil_combobox = QComboBox()
-        self.coil_combobox.setFont(QFont('Arial', 20))
-        self.coil_combobox.activated.connect(self.updated_text)
-        self.combobox_coil_set = set()
-        self.current_coil = None
+        self.needle_combobox = QComboBox()
+        self.needle_combobox.setStyleSheet("background-color: white;")
+        self.needle_combobox.setFont(QFont('Arial', 20))
+        self.needle_combobox.activated.connect(self.updated_text)
+        self.combobox_needle_set = set()
+        self.current_needle = None
         
         self.left_axis = AxisVisual(is_vertical=True)
-        self.right_axis = AxisVisual(is_vertical=True)
-        self.bottom_axis = AxisVisual(is_vertical=False)
+        self.s_label = QLabel("S")
+        self.s_label.setFont(QFont('Arial', 30))
+        self.s_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.i_label = QLabel("I")
+        self.i_label.setFont(QFont('Arial', 30))
+        self.i_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        
 
-        layout.addWidget(self.coil_combobox,0,1,1,19)
-        layout.addWidget(self.bottom_axis,20,1,1,19)
-        layout.addWidget(self.left_axis,1,0,19,1)
-        layout.addWidget(self.right_axis,1,20,19,1)
+        self.right_axis = AxisVisual(is_vertical=True)
+        self.a_label = QLabel("A")
+        self.a_label.setFont(QFont('Arial', 30))
+        self.a_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.p_label = QLabel("P")
+        self.p_label.setFont(QFont('Arial', 30))
+        self.p_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        self.bottom_axis = AxisVisual(is_vertical=False)
+        self.r_label = QLabel("R")
+        self.r_label.setFont(QFont('Arial', 30))
+        self.r_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.l_label = QLabel("L")
+        self.l_label.setFont(QFont('Arial', 30))
+        self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        layout.addWidget(self.needle_combobox,0,1,1,19)
+
+        layout.addWidget(self.bottom_axis,20,2,1,17)
+        layout.addWidget(self.r_label,20,1)
+        layout.addWidget(self.l_label,20,19)
+
+        layout.addWidget(self.left_axis,2,0,17,1)
+        layout.addWidget(self.s_label,1,0)
+        layout.addWidget(self.i_label,19,0)
+
+        layout.addWidget(self.right_axis,2,20,17,1) 
+        layout.addWidget(self.a_label,1,20)
+        layout.addWidget(self.p_label,19,20)
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -198,29 +237,37 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
-    def update_coil(self,coil_name,x,y,z):
-        self.coils[coil_name] = (x,y,z)
-        if coil_name not in self.combobox_coil_set:
-            self.combobox_coil_set.add(coil_name)
-            self.coil_combobox.addItem(coil_name)
-        if self.current_coil == coil_name:
+    def update_s(self):
+
+        # Adjust the window to full screen based on the screen it's running on
+        self.adjust_window_to_screen()
+
+        # Show the window after adjustments
+        self.show()
+
+    def update_needle(self,needle_name,x,y,z):
+        self.needles[needle_name] = (x,y,z)
+        if needle_name not in self.combobox_needle_set:
+            self.combobox_needle_set.add(needle_name)
+            self.needle_combobox.addItem(needle_name)
+        if self.current_needle == needle_name:
             self.left_axis.set_actual(x)
             self.right_axis.set_actual(y)
             self.bottom_axis.set_actual(z)
-            self.left_axis.set_desired(desired_positions[self.current_coil][0])
-            self.right_axis.set_desired(desired_positions[self.current_coil][1])
-            self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
+            self.left_axis.set_desired(desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
 
     def updated_text(self, _):
-        self.current_coil = self.coil_combobox.currentText()
-        if self.current_coil in self.coils:
-            x,y,z = self.coils[self.current_coil]
+        self.current_needle = self.needle_combobox.currentText()
+        if self.current_needle in self.needles:
+            x,y,z = self.needles[self.current_needle]
             self.left_axis.set_actual(x)
             self.right_axis.set_actual(y)
             self.bottom_axis.set_actual(z)
-            self.left_axis.set_desired(desired_positions[self.current_coil][0])
-            self.right_axis.set_desired(desired_positions[self.current_coil][1])
-            self.bottom_axis.set_desired(desired_positions[self.current_coil][2])
+            self.left_axis.set_desired(desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -240,8 +287,14 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
         
+def move_to_new_monitor(window : QMainWindow, index):
+    s = app.screens()[index]
+    qr = s.geometry()
+    window.move(qr.left(), qr.top())
+    window.update_s()
+
 class Communicate(QObject):
-    # For simplicity, a signal will just be a str and 3 ints: the coil name and its x,y,z coordinates in dcs
+    # For simplicity, a signal will just be a str and 3 floats: the needle name and its x,y,z coordinates in dcs
     data_signal = pyqtSignal(str, float, float, float)
 
 def process_tracking_data(data):
@@ -319,6 +372,9 @@ if __name__ == "__main__":
 
     # Create the main GUI window
     window = CustomMainWindow()
+
+    # Move GUI to the AR glasses. Index will depend on setup
+    move_to_new_monitor(window, 1)
 
     comm = Communicate()
     comm.data_signal.connect(window.update_coil)
