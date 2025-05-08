@@ -247,7 +247,7 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
-    def update_needle(self,x,y,z):
+    def update_coil(self,x,y,z):
         self.needle_x = x
         self.needle_y = y
         self.needle_z = z
