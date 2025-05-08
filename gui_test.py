@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
 from PyQt6.QtCore import Qt
 
+import math
+
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
@@ -20,7 +22,7 @@ needle_names = ["needle1", "needle2", "needle3"]
 needle_positions = {
     "needle1" : (0,-1,15),
     "needle2" : (2,5,23),
-    "needle3" : (100,0,0)
+    "needle3" : (1000,0,0)
 }
 
 desired_positions = {
@@ -31,7 +33,7 @@ desired_positions = {
 
 
 
-max_diff = 30 # Measurement differences are capped at this value in either direction
+max_diff = 30 # Measurement differences are capped at this value in either direction. Changing this value affects the strength of the logarithm
 
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
@@ -41,6 +43,12 @@ def get_color(desired, actual) -> QColor:
         return QColorConstants.Yellow
     else:
         return QColorConstants.Red
+    
+# Returns a float between -1.0 and 1.0, where 0 is in the center of the axis, -1 is on the bottom/left, and 1 is on the top/right
+def get_relative_position(desired, actual):
+    abs_diff = abs(desired-actual)
+    rp_capped = math.log2(min(abs_diff, max_diff)+1) / math.log2(max_diff+1)
+    return rp_capped if desired > actual else -rp_capped
 
 class AxisVisual(QWidget):
     def __init__(self, is_vertical, *args, **kwargs):
@@ -71,7 +79,7 @@ class AxisVisual(QWidget):
 
         if self.is_vertical:
             center_y = self.height() / 2
-            actual_pos_y = center_y + max(min(self.desired-self.actual, max_diff), -max_diff) / max_diff * center_y
+            actual_pos_y = center_y + get_relative_position(self.desired, self.actual) * center_y
             if center_y < actual_pos_y:
                 painter.drawRect(0,int(center_y),self.width(), int(actual_pos_y-center_y))
             else:
@@ -80,7 +88,7 @@ class AxisVisual(QWidget):
             painter.drawLine(0, int(center_y), self.width(), int(center_y))
         else:
             center_x = self.width() / 2
-            actual_pos_x = center_x + max(min(self.desired-self.actual, max_diff), -max_diff) / max_diff * center_x
+            actual_pos_x = center_x + get_relative_position(self.desired, self.actual) * center_x
             if center_x < actual_pos_x:
                 painter.drawRect(int(center_x),0,int(actual_pos_x-center_x), self.height())
             else:
