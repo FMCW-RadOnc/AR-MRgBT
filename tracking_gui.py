@@ -183,7 +183,9 @@ class CustomMainWindow(QMainWindow):
         frame.setLayout(layout)
         self.setCentralWidget(frame)
 
-        self.needles = {}
+        self.needle_x = 0
+        self.needle_y = 0
+        self.needle_z = 0
 
         self.needle_combobox = QComboBox()
         self.needle_combobox.setStyleSheet("background-color: white;")
@@ -245,29 +247,19 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
-    def update_needle(self,needle_name,x,y,z):
-        self.needles[needle_name] = (x,y,z)
-        if needle_name not in self.combobox_needle_set:
-            self.combobox_needle_set.add(needle_name)
-            self.needle_combobox.addItem(needle_name)
-        if self.current_needle == needle_name:
-            self.left_axis.set_actual(x)
-            self.right_axis.set_actual(y)
-            self.bottom_axis.set_actual(z)
-            self.left_axis.set_desired(desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+    def update_needle(self,x,y,z):
+        self.needle_x = x
+        self.needle_y = y
+        self.needle_z = z
+        self.left_axis.set_actual(x)
+        self.right_axis.set_actual(y)
+        self.bottom_axis.set_actual(z)
 
     def updated_text(self, _):
         self.current_needle = self.needle_combobox.currentText()
-        if self.current_needle in self.needles:
-            x,y,z = self.needles[self.current_needle]
-            self.left_axis.set_actual(x)
-            self.right_axis.set_actual(y)
-            self.bottom_axis.set_actual(z)
-            self.left_axis.set_desired(desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+        self.left_axis.set_desired(desired_positions[self.current_needle][0])
+        self.right_axis.set_desired(desired_positions[self.current_needle][1])
+        self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -294,8 +286,8 @@ def move_to_new_monitor(window : QMainWindow, index):
     window.update_s()
 
 class Communicate(QObject):
-    # For simplicity, a signal will just be a str and 3 floats: the needle name and its x,y,z coordinates in dcs
-    data_signal = pyqtSignal(str, float, float, float)
+    # For simplicity, a signal will just be 3 floats: x,y,z coordinates in dcs
+    data_signal = pyqtSignal(float, float, float)
 
 def process_tracking_data(data):
     if data is None:
@@ -303,13 +295,13 @@ def process_tracking_data(data):
         return
     
     for coil in data.get("coils"):
-        coil_name = coil.get("name")
-        proj = coil.get("projections")[0] # Only using 1 projection for now
-        center_position = proj.get("coordinates", {}).get("dcs", {}).get("centerPosition")
-        center_position_x = center_position.get("x")
-        center_position_y = center_position.get("y")
-        center_position_z = center_position.get("z")
-        comm.data_signal.emit(coil_name, center_position_x, center_position_y, center_position_z)
+        coil = data["coils"][0] # Only using 1 coil
+        proj = coil["projections"][0] # Only using 1 projection for now
+        position = proj["coordinates"]["dcs"]["centerPosition"]
+        x = position["x"]
+        y = position["y"]
+        z = position["z"]
+        comm.data_signal.emit(x, y, z)
 
 def on_message(ws, message):
     try:
@@ -317,9 +309,9 @@ def on_message(ws, message):
             print("Received binary data via WebSocket.")
         else:
             data = json.loads(message)
-            service = data.get("service")
-            response = data.get("response", {})
-            value = response.get("value")
+            service = data["service"]
+            response = data["response"]
+            value = response["value"]
             if service == "product/tracking":
                 print("Received a tracking message via WebSocket")
                 process_tracking_data(value)
