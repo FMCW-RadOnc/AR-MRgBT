@@ -4,7 +4,8 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QComboBox,
     QGridLayout,
-    QFrame
+    QFrame,
+    QLabel
 )
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
 from PyQt6.QtCore import Qt
@@ -88,11 +89,12 @@ class CustomMainWindow(QMainWindow):
         super(CustomMainWindow, self).__init__()
         
         # Make the window transparent
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        #self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
         # Pens used for painting the rectangles
-        self.background_pen = QPen(QColorConstants.Black,1.0)
+        self.background_pen = QPen(QColorConstants.Black,2.0)
         self.foreground_pen = QPen(QColorConstants.DarkBlue,5.0)
 
         layout = QGridLayout()
@@ -101,6 +103,7 @@ class CustomMainWindow(QMainWindow):
         self.setCentralWidget(frame)
 
         self.coil_combobox = QComboBox()
+        self.coil_combobox.setStyleSheet("background-color: white;")
         self.coil_combobox.addItems(coil_names)
         self.coil_combobox.setFont(QFont('Arial', 20))
         self.coil_combobox.activated.connect(self.current_text)
@@ -108,13 +111,44 @@ class CustomMainWindow(QMainWindow):
         
 
         self.left_axis = AxisVisual(is_vertical=True)
+        self.s_label = QLabel("S")
+        self.s_label.setFont(QFont('Arial', 30))
+        self.s_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.i_label = QLabel("I")
+        self.i_label.setFont(QFont('Arial', 30))
+        self.i_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        
+
         self.right_axis = AxisVisual(is_vertical=True)
+        self.a_label = QLabel("A")
+        self.a_label.setFont(QFont('Arial', 30))
+        self.a_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.p_label = QLabel("P")
+        self.p_label.setFont(QFont('Arial', 30))
+        self.p_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
         self.bottom_axis = AxisVisual(is_vertical=False)
+        self.r_label = QLabel("R")
+        self.r_label.setFont(QFont('Arial', 30))
+        self.r_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.l_label = QLabel("L")
+        self.l_label.setFont(QFont('Arial', 30))
+        self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         layout.addWidget(self.coil_combobox,0,1,1,19)
-        layout.addWidget(self.bottom_axis,20,1,1,19)
-        layout.addWidget(self.left_axis,1,0,19,1)
-        layout.addWidget(self.right_axis,1,20,19,1)
+
+        layout.addWidget(self.bottom_axis,20,2,1,17)
+        layout.addWidget(self.r_label,20,1)
+        layout.addWidget(self.l_label,20,19)
+
+        layout.addWidget(self.left_axis,2,0,17,1)
+        layout.addWidget(self.s_label,1,0)
+        layout.addWidget(self.i_label,19,0)
+
+        layout.addWidget(self.right_axis,2,20,17,1) 
+        layout.addWidget(self.a_label,1,20)
+        layout.addWidget(self.p_label,19,20)
+
         
 
         self.update_axes()
@@ -137,6 +171,15 @@ class CustomMainWindow(QMainWindow):
     def current_text(self, _):
         self.update_axes()
 
+    def update_s(self):
+        self.update_axes()
+
+        # Adjust the window to full screen based on the screen it's running on
+        self.adjust_window_to_screen()
+
+        # Show the window after adjustments
+        self.show()
+
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
         screen = self.screen()
@@ -155,11 +198,20 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
 
+def move_to_new_monitor(window : QMainWindow, index):
+    s = app.screens()[index]
+    qr = s.geometry()
+    window.move(qr.left(), qr.top())
+    window.update_s()
+
 if __name__ == "__main__":
     app = QApplication([])
 
     # Create the main GUI window
     window = CustomMainWindow()
+
+    # Move GUI to the AR glasses. Index will depend on setup
+    move_to_new_monitor(window, 2)
 
     # Start the Qt event loop
     app.exec()
