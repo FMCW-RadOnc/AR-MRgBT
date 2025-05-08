@@ -183,10 +183,6 @@ class CustomMainWindow(QMainWindow):
         frame.setLayout(layout)
         self.setCentralWidget(frame)
 
-        self.needle_x = 0
-        self.needle_y = 0
-        self.needle_z = 0
-
         self.needle_combobox = QComboBox()
         self.needle_combobox.setStyleSheet("background-color: white;")
         self.needle_combobox.setFont(QFont('Arial', 20))
@@ -248,9 +244,6 @@ class CustomMainWindow(QMainWindow):
         self.show()
 
     def update_coil(self,x,y,z):
-        self.needle_x = x
-        self.needle_y = y
-        self.needle_z = z
         self.left_axis.set_actual(x)
         self.right_axis.set_actual(y)
         self.bottom_axis.set_actual(z)
