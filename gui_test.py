@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QComboBox,
     QGridLayout,
+    QVBoxLayout,
     QFrame,
     QLabel,
     QPushButton,
@@ -24,10 +25,10 @@ YELLOW_THRESHOLD = 10
 # Test data
 needle_positions = {
     "Needle 1" : (0,-1,15),
-    "Needle 4" : (2,5,23)
+    #"Needle 4" : (2,5,23)
 }
 
-needle_names = needle_positions.keys()
+needle_names = ["Needle 1", "Needle 4"]
 
 """
 desired_positions = {
@@ -65,6 +66,19 @@ class AxisVisual(QWidget):
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
+        layout = QVBoxLayout(self)
+        self.no_desired_data_label = QLabel("No Goal Point Data")
+        self.no_desired_data_label.setFont(QFont('Arial', 20))
+        self.no_desired_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.no_desired_data_label.setStyleSheet("background-color: white;")
+        self.no_desired_data_label.hide()
+        layout.addWidget(self.no_desired_data_label)
+        self.no_actual_data_label = QLabel("No Coil Data")
+        self.no_actual_data_label.setFont(QFont('Arial', 20))
+        self.no_actual_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.no_actual_data_label.setStyleSheet("background-color: white;")
+        self.no_actual_data_label.hide()
+        layout.addWidget(self.no_actual_data_label)
 
     def set_actual(self, actual):
         self.actual = actual
@@ -81,11 +95,15 @@ class AxisVisual(QWidget):
         painter.drawRect(0,0,self.width(), self.height())
 
         if self.desired is None:
-            # TODO: Add label to show we need data
+            self.no_actual_data_label.hide()
+            self.no_desired_data_label.show()
             return
         elif self.actual is None:
-            # TODO: Add label to show we aren't receiving data from the needle
+            self.no_desired_data_label.hide()
+            self.no_actual_data_label.show()
             return
+        self.no_actual_data_label.hide()
+        self.no_desired_data_label.hide()
 
         c = get_color(self.desired, self.actual)
         painter.setPen(c)
@@ -126,7 +144,11 @@ class CustomMainWindow(QMainWindow):
         self.setCentralWidget(frame)
 
         self.load_button = QPushButton("LOAD", parent=self)
+        bold_font = QFont('Arial', 20)
+        bold_font.setBold(True)
+        self.load_button.setFont(bold_font)
         self.load_button.clicked.connect(self.load_point_data)
+        self.load_button.setStyleSheet("background-color: blue;")
 
         self.needle_combobox = QComboBox()
         self.needle_combobox.setStyleSheet("background-color: white;")
@@ -164,7 +186,7 @@ class CustomMainWindow(QMainWindow):
 
         layout.addWidget(self.needle_combobox,0,1,1,17)
 
-        layout.addWidget(self.load_button,0,18,1,2) # TODO
+        layout.addWidget(self.load_button,0,18,1,2) # TODO: Make the load button look nicer
 
         layout.addWidget(self.bottom_axis,20,2,1,17)
         layout.addWidget(self.r_label,20,1)
@@ -195,33 +217,43 @@ class CustomMainWindow(QMainWindow):
         2) Load CSV file into desired data
         """
         file_name, _ = QFileDialog.getOpenFileName(self, 'Open Label File', r"<Default dir>", "Label files (*.csv)")
-        with open(file_name, mode='r', encoding='UTF-8') as file:
-            csvFile = csv.reader(file)
-            try:
-                desired_positions = {}
-                for line in csvFile:
-                    label = line[0]
-                    x = float(line[1])
-                    y = float(line[2])
-                    z = float(line[3])
-                    desired_positions[label] = (x,y,z)
-            except:
-                print("Something went wrong with loading ", file_name)
-                desired_positions = {}
+        try:
+            with open(file_name, mode='r', encoding='UTF-8') as file:
+                csvFile = csv.reader(file)
+                try:
+                    desired_positions = {}
+                    for line in csvFile:
+                        label = line[0]
+                        x = float(line[1])
+                        y = float(line[2])
+                        z = float(line[3])
+                        desired_positions[label] = (x,y,z)
+                except:
+                    print("Something went wrong with loading ", file_name)
+                    desired_positions = {}
+        except:
+            print("No valid file selected")
         self.update_axes()
 
     def update_axes(self):
         self.current_needle = self.needle_combobox.currentText()
-        print(self.current_needle)
-        print(needle_positions)
-        print(desired_positions)
-        if self.current_needle in needle_positions and self.current_needle in desired_positions:
+        if self.current_needle in needle_positions:
             self.left_axis.set_actual(needle_positions[self.current_needle][0])
             self.right_axis.set_actual(needle_positions[self.current_needle][1])
             self.bottom_axis.set_actual(needle_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_actual(None)
+            self.right_axis.set_actual(None)
+            self.bottom_axis.set_actual(None)
+
+        if self.current_needle in desired_positions:
             self.left_axis.set_desired(desired_positions[self.current_needle][0])
             self.right_axis.set_desired(desired_positions[self.current_needle][1])
             self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_desired(None)
+            self.right_axis.set_desired(None)
+            self.bottom_axis.set_desired(None)
 
     def current_text(self, _):
         self.update_axes()
