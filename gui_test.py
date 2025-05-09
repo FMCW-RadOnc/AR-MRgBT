@@ -59,7 +59,7 @@ class AxisVisual(QWidget):
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
-        self.desired_positions = {}
+        
         layout = QVBoxLayout(self)
         self.no_desired_data_label = QLabel("No Goal Point Data")
         self.no_desired_data_label.setFont(QFont('Arial', 20))
@@ -131,6 +131,8 @@ class CustomMainWindow(QMainWindow):
         #self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        self.desired_positions = {}
 
         layout = QGridLayout()
         frame = QFrame(self)
