@@ -30,14 +30,7 @@ needle_positions = {
 
 needle_names = ["Needle 1", "Needle 4"]
 
-"""
-desired_positions = {
-    "needle1" : (0,0,0),
-    "needle2" : (3,4,20),
-    "needle3" : (90, 10, 15)
-}
-"""
-desired_positions = {}
+
 
 
 
@@ -66,6 +59,7 @@ class AxisVisual(QWidget):
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
+        self.desired_positions = {}
         layout = QVBoxLayout(self)
         self.no_desired_data_label = QLabel("No Goal Point Data")
         self.no_desired_data_label.setFont(QFont('Arial', 20))
@@ -186,7 +180,7 @@ class CustomMainWindow(QMainWindow):
 
         layout.addWidget(self.needle_combobox,0,1,1,17)
 
-        layout.addWidget(self.load_button,0,18,1,2) # TODO: Make the load button look nicer
+        layout.addWidget(self.load_button,0,18,1,2)
 
         layout.addWidget(self.bottom_axis,20,2,1,17)
         layout.addWidget(self.r_label,20,1)
@@ -211,7 +205,6 @@ class CustomMainWindow(QMainWindow):
         self.show()
 
     def load_point_data(self):
-        global desired_positions
         """
         1) Prompt user to select a CSV file
         2) Load CSV file into desired data
@@ -221,16 +214,16 @@ class CustomMainWindow(QMainWindow):
             with open(file_name, mode='r', encoding='UTF-8') as file:
                 csvFile = csv.reader(file)
                 try:
-                    desired_positions = {}
+                    self.desired_positions = {}
                     for line in csvFile:
                         label = line[0]
                         x = float(line[1])
                         y = float(line[2])
                         z = float(line[3])
-                        desired_positions[label] = (x,y,z)
+                        self.desired_positions[label] = (x,y,z)
                 except:
                     print("Something went wrong with loading ", file_name)
-                    desired_positions = {}
+                    self.desired_positions = {}
         except:
             print("No valid file selected")
         self.update_axes()
@@ -246,10 +239,10 @@ class CustomMainWindow(QMainWindow):
             self.right_axis.set_actual(None)
             self.bottom_axis.set_actual(None)
 
-        if self.current_needle in desired_positions:
-            self.left_axis.set_desired(desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+        if self.current_needle in self.desired_positions:
+            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
         else:
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)

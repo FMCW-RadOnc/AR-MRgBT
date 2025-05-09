@@ -8,13 +8,17 @@ from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
     QComboBox,
+    QVBoxLayout,
     QGridLayout,
     QFrame,
-    QLabel
+    QLabel,
+    QPushButton,
+    QFileDialog
 )
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 
+import csv
 import math
 
 # URLs for the image service
@@ -25,12 +29,6 @@ WEBSOCKET_URL = "wss://10.243.146.24:7788/SRC"
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
 
-# Test data (Placeholder, will use real imported data later)
-desired_positions = {
-    "needle1" : (0,0,0),
-    "needle2" : (3,4,20),
-    "needle3" : (90, 10, 15)
-}
 
 max_diff = 30 # Measurement differences are capped at this value in either direction
 
@@ -130,8 +128,21 @@ class AxisVisual(QWidget):
         self.is_vertical = is_vertical
         self.background_pen = QPen(QColorConstants.White,1.0)
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
-        self.actual = 0
-        self.desired = 0
+        self.actual = None
+        self.desired = None
+        layout = QVBoxLayout(self)
+        self.no_desired_data_label = QLabel("No Goal Point Data")
+        self.no_desired_data_label.setFont(QFont('Arial', 20))
+        self.no_desired_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.no_desired_data_label.setStyleSheet("background-color: white;")
+        self.no_desired_data_label.hide()
+        layout.addWidget(self.no_desired_data_label)
+        self.no_actual_data_label = QLabel("No Coil Data")
+        self.no_actual_data_label.setFont(QFont('Arial', 20))
+        self.no_actual_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self.no_actual_data_label.setStyleSheet("background-color: white;")
+        self.no_actual_data_label.hide()
+        layout.addWidget(self.no_actual_data_label)
 
     def set_actual(self, actual):
         self.actual = actual
@@ -146,6 +157,17 @@ class AxisVisual(QWidget):
         painter.setPen(self.background_pen)
         painter.setBrush(QColorConstants.White)
         painter.drawRect(0,0,self.width(), self.height())
+
+        if self.desired is None:
+            self.no_actual_data_label.hide()
+            self.no_desired_data_label.show()
+            return
+        elif self.actual is None:
+            self.no_desired_data_label.hide()
+            self.no_actual_data_label.show()
+            return
+        self.no_actual_data_label.hide()
+        self.no_desired_data_label.hide()
 
         c = get_color(self.desired, self.actual)
         painter.setPen(c)
@@ -178,10 +200,19 @@ class CustomMainWindow(QMainWindow):
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
+        self.desired_positions = {}
+
         layout = QGridLayout()
         frame = QFrame(self)
         frame.setLayout(layout)
         self.setCentralWidget(frame)
+
+        self.load_button = QPushButton("LOAD", parent=self)
+        bold_font = QFont('Arial', 20)
+        bold_font.setBold(True)
+        self.load_button.setFont(bold_font)
+        self.load_button.clicked.connect(self.load_point_data)
+        self.load_button.setStyleSheet("background-color: blue;")
 
         self.needle_combobox = QComboBox()
         self.needle_combobox.setStyleSheet("background-color: white;")
@@ -215,7 +246,9 @@ class CustomMainWindow(QMainWindow):
         self.l_label.setFont(QFont('Arial', 30))
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        layout.addWidget(self.needle_combobox,0,1,1,19)
+        layout.addWidget(self.needle_combobox,0,1,1,17)
+
+        layout.addWidget(self.load_button,0,18,1,2)
 
         layout.addWidget(self.bottom_axis,20,2,1,17)
         layout.addWidget(self.r_label,20,1)
@@ -243,6 +276,38 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
+    def load_point_data(self):
+        """
+        1) Prompt user to select a CSV file
+        2) Load CSV file into desired data
+        """
+        file_name, _ = QFileDialog.getOpenFileName(self, 'Open Label File', r"<Default dir>", "Label files (*.csv)")
+        try:
+            with open(file_name, mode='r', encoding='UTF-8') as file:
+                csvFile = csv.reader(file)
+                try:
+                    self.desired_positions = {}
+                    for line in csvFile:
+                        label = line[0]
+                        x = float(line[1])
+                        y = float(line[2])
+                        z = float(line[3])
+                        self.desired_positions[label] = (x,y,z)
+                except:
+                    print("Something went wrong with loading ", file_name)
+                    self.desired_positions = {}
+        except:
+            print("No valid file selected")
+
+        if self.current_needle in self.desired_positions:
+            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_desired(None)
+            self.right_axis.set_desired(None)
+            self.bottom_axis.set_desired(None)
+
     def update_coil(self,x,y,z):
         self.left_axis.set_actual(x)
         self.right_axis.set_actual(y)
@@ -250,9 +315,14 @@ class CustomMainWindow(QMainWindow):
 
     def updated_text(self, _):
         self.current_needle = self.needle_combobox.currentText()
-        self.left_axis.set_desired(desired_positions[self.current_needle][0])
-        self.right_axis.set_desired(desired_positions[self.current_needle][1])
-        self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+        if self.current_needle in self.desired_positions:
+            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_desired(None)
+            self.right_axis.set_desired(None)
+            self.bottom_axis.set_desired(None)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
