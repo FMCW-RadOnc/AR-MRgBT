@@ -5,31 +5,38 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
     QFrame,
-    QLabel
+    QLabel,
+    QPushButton,
+    QFileDialog
 )
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
 from PyQt6.QtCore import Qt
 
+import csv
 import math
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
 
-needle_names = ["needle1", "needle2", "needle3"]
+
 
 # Test data
 needle_positions = {
-    "needle1" : (0,-1,15),
-    "needle2" : (2,5,23),
-    "needle3" : (1000,0,0)
+    "Needle 1" : (0,-1,15),
+    "Needle 4" : (2,5,23)
 }
 
+needle_names = needle_positions.keys()
+
+"""
 desired_positions = {
     "needle1" : (0,0,0),
     "needle2" : (3,4,20),
     "needle3" : (90, 10, 15)
 }
+"""
+desired_positions = {}
 
 
 
@@ -56,8 +63,8 @@ class AxisVisual(QWidget):
         self.is_vertical = is_vertical
         self.background_pen = QPen(QColorConstants.White,1.0)
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
-        self.actual = 0
-        self.desired = 0
+        self.actual = None
+        self.desired = None
 
     def set_actual(self, actual):
         self.actual = actual
@@ -72,6 +79,13 @@ class AxisVisual(QWidget):
         painter.setPen(self.background_pen)
         painter.setBrush(QColorConstants.White)
         painter.drawRect(0,0,self.width(), self.height())
+
+        if self.desired is None:
+            # TODO: Add label to show we need data
+            return
+        elif self.actual is None:
+            # TODO: Add label to show we aren't receiving data from the needle
+            return
 
         c = get_color(self.desired, self.actual)
         painter.setPen(c)
@@ -111,12 +125,16 @@ class CustomMainWindow(QMainWindow):
         frame.setLayout(layout)
         self.setCentralWidget(frame)
 
+        self.load_button = QPushButton("LOAD", parent=self)
+        self.load_button.clicked.connect(self.load_point_data)
+
         self.needle_combobox = QComboBox()
         self.needle_combobox.setStyleSheet("background-color: white;")
         self.needle_combobox.addItems(needle_names)
         self.needle_combobox.setFont(QFont('Arial', 20))
         self.needle_combobox.activated.connect(self.current_text)
-        self.current_needle = needle_names[0]
+        #self.current_needle = needle_names[0]
+        self.current_needle = None
         
 
         self.left_axis = AxisVisual(is_vertical=True)
@@ -144,7 +162,9 @@ class CustomMainWindow(QMainWindow):
         self.l_label.setFont(QFont('Arial', 30))
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        layout.addWidget(self.needle_combobox,0,1,1,19)
+        layout.addWidget(self.needle_combobox,0,1,1,17)
+
+        layout.addWidget(self.load_button,0,18,1,2) # TODO
 
         layout.addWidget(self.bottom_axis,20,2,1,17)
         layout.addWidget(self.r_label,20,1)
@@ -168,14 +188,40 @@ class CustomMainWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
+    def load_point_data(self):
+        global desired_positions
+        """
+        1) Prompt user to select a CSV file
+        2) Load CSV file into desired data
+        """
+        file_name, _ = QFileDialog.getOpenFileName(self, 'Open Label File', r"<Default dir>", "Label files (*.csv)")
+        with open(file_name, mode='r', encoding='UTF-8') as file:
+            csvFile = csv.reader(file)
+            try:
+                desired_positions = {}
+                for line in csvFile:
+                    label = line[0]
+                    x = float(line[1])
+                    y = float(line[2])
+                    z = float(line[3])
+                    desired_positions[label] = (x,y,z)
+            except:
+                print("Something went wrong with loading ", file_name)
+                desired_positions = {}
+        self.update_axes()
+
     def update_axes(self):
         self.current_needle = self.needle_combobox.currentText()
-        self.left_axis.set_actual(needle_positions[self.current_needle][0])
-        self.right_axis.set_actual(needle_positions[self.current_needle][1])
-        self.bottom_axis.set_actual(needle_positions[self.current_needle][2])
-        self.left_axis.set_desired(desired_positions[self.current_needle][0])
-        self.right_axis.set_desired(desired_positions[self.current_needle][1])
-        self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
+        print(self.current_needle)
+        print(needle_positions)
+        print(desired_positions)
+        if self.current_needle in needle_positions and self.current_needle in desired_positions:
+            self.left_axis.set_actual(needle_positions[self.current_needle][0])
+            self.right_axis.set_actual(needle_positions[self.current_needle][1])
+            self.bottom_axis.set_actual(needle_positions[self.current_needle][2])
+            self.left_axis.set_desired(desired_positions[self.current_needle][0])
+            self.right_axis.set_desired(desired_positions[self.current_needle][1])
+            self.bottom_axis.set_desired(desired_positions[self.current_needle][2])
 
     def current_text(self, _):
         self.update_axes()
