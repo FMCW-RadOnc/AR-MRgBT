@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QImage, QPixmap, QKeyEvent
 from queue import Queue
-import cv2.dnn_superres
 import time
 
 

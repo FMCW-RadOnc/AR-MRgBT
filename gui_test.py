@@ -24,11 +24,11 @@ YELLOW_THRESHOLD = 10
 
 # Test data
 needle_positions = {
-    "Needle 1" : (0,-1,15),
-    #"Needle 4" : (2,5,23)
+    "1" : (0,-1,15),
+    "4" : (2,5,23)
 }
 
-needle_names = ["Needle 1", "Needle 4"]
+needle_names = ["1", "4"]
 
 
 
@@ -280,7 +280,7 @@ class CustomMainWindow(QMainWindow):
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
 
-def move_to_new_monitor(window : QMainWindow, index):
+def move_to_new_monitor(window : CustomMainWindow, index):
     s = app.screens()[index]
     qr = s.geometry()
     window.move(qr.left(), qr.top())
