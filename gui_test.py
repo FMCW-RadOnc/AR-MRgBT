@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (
     QFrame,
     QLabel,
     QPushButton,
-    QFileDialog
+    QFileDialog,
+    QMessageBox
 )
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
 from PyQt6.QtCore import Qt
@@ -179,8 +180,12 @@ class CustomMainWindow(QMainWindow):
         self.l_label = QLabel("L")
         self.l_label.setFont(QFont('Arial', 30))
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        
+        self.exit_label = QLabel("Hit the Escape Key to exit program.")
+        self.exit_label.setFont(QFont('Arial', 20))
 
-        layout.addWidget(self.needle_combobox,0,1,1,17)
+        layout.addWidget(self.exit_label,0,0,1,3)
+        layout.addWidget(self.needle_combobox,0,3,1,14)
 
         layout.addWidget(self.load_button,0,18,1,2)
 
@@ -205,6 +210,16 @@ class CustomMainWindow(QMainWindow):
 
         # Show the window after adjustments
         self.show()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            message_box = QMessageBox(self)
+            message_box.setWindowTitle("Exit Confirmation")
+            message_box.setText("Click \"Ok\" to exit.")
+            message_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            message_box_button = message_box.exec()
+            if message_box_button == QMessageBox.StandardButton.Ok:
+                QApplication.quit()
 
     def load_point_data(self):
         """
@@ -293,7 +308,7 @@ if __name__ == "__main__":
     window = CustomMainWindow()
 
     # Move GUI to the AR glasses. Index will depend on setup
-    move_to_new_monitor(window, 1)
+    #move_to_new_monitor(window, 1)
 
     # Start the Qt event loop
     app.exec()
