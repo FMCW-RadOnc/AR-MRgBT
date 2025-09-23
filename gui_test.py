@@ -11,10 +11,12 @@ from PyQt6.QtWidgets import (
     QFileDialog
 )
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 import csv
 import math
+
+import numpy as np
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -30,9 +32,14 @@ needle_positions = {
 
 needle_names = ["1", "4"]
 
-
-
-
+MIN_VAL = -30
+MAX_VAL = 30
+UPDATE_PERIOD = 0.1 # In seconds
+def update_needle_positions_randomly():
+    global needle_positions
+    for coil in needle_positions:
+        needle_positions[coil] = (np.random.rand(3) * (MAX_VAL - MIN_VAL)) + MIN_VAL
+    #print(needle_positions)
 
 max_diff = 30 # Measurement differences are capped at this value in either direction. Changing this value affects the strength of the logarithm
 
@@ -196,9 +203,12 @@ class CustomMainWindow(QMainWindow):
         layout.addWidget(self.a_label,1,20)
         layout.addWidget(self.p_label,19,20)
 
-        
+        self.timer = QTimer(self)
+        self.timer.setInterval(int(UPDATE_PERIOD*1000))
+        self.timer.timeout.connect(self.update_axes)
+        self.timer.start()
 
-        self.update_axes()
+        #self.update_axes()
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -231,6 +241,7 @@ class CustomMainWindow(QMainWindow):
         self.update_axes()
 
     def update_axes(self):
+        update_needle_positions_randomly()
         self.current_needle = self.needle_combobox.currentText()
         if self.current_needle in needle_positions:
             self.left_axis.set_actual(needle_positions[self.current_needle][0])
