@@ -202,8 +202,17 @@ class CustomMainWindow(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
         self.desired_positions = {}
+        self.actual_positions = {}
 
         layout = QGridLayout()
+        layout.setColumnStretch(0,1)
+        layout.setColumnStretch(1,1)
+        layout.setColumnStretch(2,5)
+        layout.setColumnStretch(3,1)
+        layout.setColumnStretch(4,1)
+        layout.setRowStretch(0,0)
+        layout.setRowStretch(1,1)
+        layout.setRowStretch(2,0)
         frame = QFrame(self)
         frame.setLayout(layout)
         self.setCentralWidget(frame)
@@ -248,24 +257,25 @@ class CustomMainWindow(QMainWindow):
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         self.exit_label = QLabel("Hit the Escape Key to exit program.")
-        self.exit_label.setFont(QFont('Arial', 20))
+        self.exit_label.setFont(QFont('Arial', 15))
+        self.exit_label.setWordWrap(True)
 
-        layout.addWidget(self.exit_label,0,0,1,3)
-        layout.addWidget(self.needle_combobox,0,3,1,14)
+        layout.addWidget(self.exit_label,0,1)
+        layout.addWidget(self.needle_combobox,0,2)
 
-        layout.addWidget(self.load_button,0,18,1,2)
+        layout.addWidget(self.load_button,0,3)
 
-        layout.addWidget(self.bottom_axis,20,2,1,17)
-        layout.addWidget(self.r_label,20,1)
-        layout.addWidget(self.l_label,20,19)
+        layout.addWidget(self.bottom_axis,2,2)
+        layout.addWidget(self.r_label,2,1)
+        layout.addWidget(self.l_label,2,3)
 
-        layout.addWidget(self.left_axis,2,0,17,1)
-        layout.addWidget(self.s_label,1,0)
-        layout.addWidget(self.i_label,19,0)
+        layout.addWidget(self.left_axis,1,0)
+        layout.addWidget(self.s_label,0,0)
+        layout.addWidget(self.i_label,2,0)
 
-        layout.addWidget(self.right_axis,2,20,17,1) 
-        layout.addWidget(self.a_label,1,20)
-        layout.addWidget(self.p_label,19,20)
+        layout.addWidget(self.right_axis,1,4) 
+        layout.addWidget(self.a_label,0,4)
+        layout.addWidget(self.p_label,2,4)
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -302,18 +312,22 @@ class CustomMainWindow(QMainWindow):
                 csvFile = csv.reader(file)
                 try:
                     self.desired_positions = {}
+                    labels = []
                     for line in csvFile:
                         label = line[0]
                         x = float(line[1])
                         y = float(line[2])
                         z = float(line[3])
                         self.desired_positions[label] = (x,y,z)
+                        labels.append(label)
+                    self.needle_combobox.addItems(labels)
                 except:
                     print("Something went wrong with loading ", file_name)
                     self.desired_positions = {}
         except:
             print("No valid file selected")
 
+        self.current_needle = self.needle_combobox.currentText()
         if self.current_needle in self.desired_positions:
             self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
             self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
@@ -322,11 +336,21 @@ class CustomMainWindow(QMainWindow):
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)
             self.bottom_axis.set_desired(None)
+        if self.current_needle in self.actual_positions:
+            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
+            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
+            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_actual(None)
+            self.right_axis.set_actual(None)
+            self.bottom_axis.set_actual(None)
 
-    def update_coil(self,x,y,z):
-        self.left_axis.set_actual(x)
-        self.right_axis.set_actual(y)
-        self.bottom_axis.set_actual(z)
+    def update_coil(self,x,y,z,coil_name):
+        self.actual_positions[coil_name] = (x,y,z)
+        if self.current_needle == coil_name:
+            self.left_axis.set_actual(x)
+            self.right_axis.set_actual(y)
+            self.bottom_axis.set_actual(z)
 
     def updated_text(self, _):
         self.current_needle = self.needle_combobox.currentText()
@@ -338,6 +362,14 @@ class CustomMainWindow(QMainWindow):
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)
             self.bottom_axis.set_desired(None)
+        if self.current_needle in self.actual_positions:
+            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
+            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
+            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_actual(None)
+            self.right_axis.set_actual(None)
+            self.bottom_axis.set_actual(None)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -365,21 +397,22 @@ def move_to_new_monitor(window : QMainWindow, index):
 
 class Communicate(QObject):
     # For simplicity, a signal will just be 3 floats: x,y,z coordinates in dcs
-    data_signal = pyqtSignal(float, float, float)
+    data_signal = pyqtSignal(float, float, float, str)
 
 def process_tracking_data(data):
     if data is None:
         print("Received NoneType value, skipping processing.")
         return
     
-    for coil in data.get("coils"):
-        coil = data["coils"][0] # Only using 1 coil
+    for coil in data["coils"]:
+        coil_name = coil["name"]
         proj = coil["projections"][0] # Only using 1 projection for now
         position = proj["coordinates"]["dcs"]["centerPosition"]
         x = position["x"]
         y = position["y"]
         z = position["z"]
-        comm.data_signal.emit(x, y, z)
+        comm.data_signal.emit(x, y, z, coil_name)
+
 
 def on_message(ws, message):
     try:

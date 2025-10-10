@@ -143,6 +143,14 @@ class CustomMainWindow(QMainWindow):
         self.desired_positions = {}
 
         layout = QGridLayout()
+        layout.setColumnStretch(0,1)
+        layout.setColumnStretch(1,1)
+        layout.setColumnStretch(2,5)
+        layout.setColumnStretch(3,1)
+        layout.setColumnStretch(4,1)
+        layout.setRowStretch(0,0)
+        layout.setRowStretch(1,1)
+        layout.setRowStretch(2,0)
         frame = QFrame(self)
         frame.setLayout(layout)
         self.setCentralWidget(frame)
@@ -189,24 +197,27 @@ class CustomMainWindow(QMainWindow):
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         
         self.exit_label = QLabel("Hit the Escape Key to exit program.")
-        self.exit_label.setFont(QFont('Arial', 20))
+        self.exit_label.setFont(QFont('Arial', 15))
+        self.exit_label.setWordWrap(True)
 
-        layout.addWidget(self.exit_label,0,0,1,3)
-        layout.addWidget(self.needle_combobox,0,3,1,14)
+        layout.addWidget(self.exit_label,0,1)
+        layout.addWidget(self.needle_combobox,0,2)
 
-        layout.addWidget(self.load_button,0,18,1,2)
+        layout.addWidget(self.load_button,0,3)
 
-        layout.addWidget(self.bottom_axis,20,2,1,17)
-        layout.addWidget(self.r_label,20,1)
-        layout.addWidget(self.l_label,20,19)
+        layout.addWidget(self.bottom_axis,2,2)
+        layout.addWidget(self.r_label,2,1)
+        layout.addWidget(self.l_label,2,3)
 
-        layout.addWidget(self.left_axis,2,0,17,1)
-        layout.addWidget(self.s_label,1,0)
-        layout.addWidget(self.i_label,19,0)
+        layout.addWidget(self.left_axis,1,0)
+        layout.addWidget(self.s_label,0,0)
+        layout.addWidget(self.i_label,2,0)
 
-        layout.addWidget(self.right_axis,2,20,17,1) 
-        layout.addWidget(self.a_label,1,20)
-        layout.addWidget(self.p_label,19,20)
+        layout.addWidget(self.right_axis,1,4) 
+        layout.addWidget(self.a_label,0,4)
+        layout.addWidget(self.p_label,2,4)
+
+        
 
         self.timer = QTimer(self)
         self.timer.setInterval(int(UPDATE_PERIOD*1000))
