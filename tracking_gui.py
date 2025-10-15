@@ -215,6 +215,7 @@ class CustomMainWindow(QMainWindow):
                 file.write("\n" + formatted_datetime_string + "\n")
 
         self.desired_positions = {}
+        self.actual_positions = {}
 
         layout = QGridLayout()
         layout.setColumnStretch(0,1)
@@ -324,18 +325,22 @@ class CustomMainWindow(QMainWindow):
                 csvFile = csv.reader(file)
                 try:
                     self.desired_positions = {}
+                    labels = []
                     for line in csvFile:
                         label = line[0]
                         x = float(line[1])
                         y = float(line[2])
                         z = float(line[3])
                         self.desired_positions[label] = (x,y,z)
+                        labels.append(label)
+                    self.needle_combobox.addItems(labels)
                 except:
                     print("Something went wrong with loading ", file_name)
                     self.desired_positions = {}
         except:
             print("No valid file selected")
 
+        self.current_needle = self.needle_combobox.currentText()
         if self.current_needle in self.desired_positions:
             self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
             self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
@@ -370,6 +375,14 @@ class CustomMainWindow(QMainWindow):
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)
             self.bottom_axis.set_desired(None)
+        if self.current_needle in self.actual_positions:
+            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
+            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
+            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
+        else:
+            self.left_axis.set_actual(None)
+            self.right_axis.set_actual(None)
+            self.bottom_axis.set_actual(None)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -404,22 +417,15 @@ def process_tracking_data(data):
         print("Received NoneType value, skipping processing.")
         return
     
-    for coil in data.get("coils"):
-        #coil = data["coils"][0] # For only using 1 coil
+    for coil in data["coils"]:
+        coil_name = coil["name"]
         proj = coil["projections"][0] # Only using 1 projection for now
         position = proj["coordinates"]["dcs"]["centerPosition"]
         x = position["x"]
         y = position["y"]
         z = position["z"]
-<<<<<<< HEAD
-        if WRITE_TO_FILE:
-            with open("test_data.txt", 'a') as file:
-                file.write(str(x) + ", " + str(y) + ", " + str(z) + "\n")
-        comm.data_signal.emit(x, y, z)
-=======
         comm.data_signal.emit(x, y, z, coil_name)
 
->>>>>>> 8b289aeb409a26ca456bcdfe24d7116c218328e7
 
 def on_message(ws, message):
     try:
