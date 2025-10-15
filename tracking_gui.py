@@ -1,3 +1,4 @@
+from datetime import datetime
 import websocket
 import ssl
 import json
@@ -22,9 +23,15 @@ from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 import csv
 import math
 
-# URLs for the image service
+# URLs for the tracking service
 BASE_URL = "https://10.243.146.24:7787/SRC/v2/product"
 WEBSOCKET_URL = "wss://10.243.146.24:7788/SRC"
+
+# For local testing. Comment this out when using the real image service
+#BASE_URL = "https://127.0.0.1:7787/SRC/v2/product"
+#WEBSOCKET_URL = "wss://127.0.0.1:7788/SRC"
+
+WRITE_TO_FILE = True
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -58,15 +65,15 @@ def get_session_id():
         "license": {
             "Name": "MCW",
             "Comment": None,
-            "StartDate": "20240909",
-            "WarnDate": "20250809",
-            "ExpireDate": "20250909",
+            "StartDate": "20240910",
+            "WarnDate": "20260830",
+            "ExpireDate": "20260930",
             "SystemId": "176570",
             "IsReadOptionAvailable": True,
             "IsExecuteOptionAvailable": True,
             "IsAdvancedOptionAvailable": True,
             "Version": "1.0",
-            "Hash": "11mgzffmTbH1poO78kgCN7uRgLZUdXW%2BcrTyTucEsEvbTn5qj8DZLU4NMTlhSkUpk%2FmgDHFpWc4IDCEgkV05Kg%3D%3D"
+            "Hash": "gKEzJrSd1S48prCxwZ%2Bwheju0Tyz67NtLwqe3geWm95BzcOYHFU5V4ThQm%2F%2F0dGdElhMmMKKZX0y7%2BcRF007hg%3D%3D"
         },
         "name": "Test Remote Client"
     }
@@ -200,6 +207,12 @@ class CustomMainWindow(QMainWindow):
         
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        if WRITE_TO_FILE:
+            current_datetime = datetime.now()
+            formatted_datetime_string = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            with open("test_data.txt", 'a') as file:
+                file.write("\n" + formatted_datetime_string + "\n")
 
         self.desired_positions = {}
 
@@ -373,12 +386,15 @@ def process_tracking_data(data):
         return
     
     for coil in data.get("coils"):
-        coil = data["coils"][0] # Only using 1 coil
+        #coil = data["coils"][0] # For only using 1 coil
         proj = coil["projections"][0] # Only using 1 projection for now
         position = proj["coordinates"]["dcs"]["centerPosition"]
         x = position["x"]
         y = position["y"]
         z = position["z"]
+        if WRITE_TO_FILE:
+            with open("test_data.txt", 'a') as file:
+                file.write(str(x) + ", " + str(y) + ", " + str(z) + "\n")
         comm.data_signal.emit(x, y, z)
 
 def on_message(ws, message):
