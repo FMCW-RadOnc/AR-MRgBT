@@ -12,10 +12,12 @@ from PyQt6.QtWidgets import (
     QMessageBox
 )
 from PyQt6.QtGui import QPainter, QColor, QColorConstants, QPen, QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 import csv
 import math
+
+import numpy as np
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -31,9 +33,14 @@ needle_positions = {
 
 needle_names = ["1", "4"]
 
-
-
-
+MIN_VAL = -30
+MAX_VAL = 30
+UPDATE_PERIOD = 0.1 # In seconds
+def update_needle_positions_randomly():
+    global needle_positions
+    for coil in needle_positions:
+        needle_positions[coil] = (np.random.rand(3) * (MAX_VAL - MIN_VAL)) + MIN_VAL
+    #print(needle_positions)
 
 max_diff = 30 # Measurement differences are capped at this value in either direction. Changing this value affects the strength of the logarithm
 
@@ -136,6 +143,14 @@ class CustomMainWindow(QMainWindow):
         self.desired_positions = {}
 
         layout = QGridLayout()
+        layout.setColumnStretch(0,1)
+        layout.setColumnStretch(1,1)
+        layout.setColumnStretch(2,5)
+        layout.setColumnStretch(3,1)
+        layout.setColumnStretch(4,1)
+        layout.setRowStretch(0,0)
+        layout.setRowStretch(1,1)
+        layout.setRowStretch(2,0)
         frame = QFrame(self)
         frame.setLayout(layout)
         self.setCentralWidget(frame)
@@ -182,28 +197,34 @@ class CustomMainWindow(QMainWindow):
         self.l_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         
         self.exit_label = QLabel("Hit the Escape Key to exit program.")
-        self.exit_label.setFont(QFont('Arial', 20))
+        self.exit_label.setFont(QFont('Arial', 15))
+        self.exit_label.setWordWrap(True)
 
-        layout.addWidget(self.exit_label,0,0,1,3)
-        layout.addWidget(self.needle_combobox,0,3,1,14)
+        layout.addWidget(self.exit_label,0,1)
+        layout.addWidget(self.needle_combobox,0,2)
 
-        layout.addWidget(self.load_button,0,18,1,2)
+        layout.addWidget(self.load_button,0,3)
 
-        layout.addWidget(self.bottom_axis,20,2,1,17)
-        layout.addWidget(self.r_label,20,1)
-        layout.addWidget(self.l_label,20,19)
+        layout.addWidget(self.bottom_axis,2,2)
+        layout.addWidget(self.r_label,2,1)
+        layout.addWidget(self.l_label,2,3)
 
-        layout.addWidget(self.left_axis,2,0,17,1)
-        layout.addWidget(self.s_label,1,0)
-        layout.addWidget(self.i_label,19,0)
+        layout.addWidget(self.left_axis,1,0)
+        layout.addWidget(self.s_label,0,0)
+        layout.addWidget(self.i_label,2,0)
 
-        layout.addWidget(self.right_axis,2,20,17,1) 
-        layout.addWidget(self.a_label,1,20)
-        layout.addWidget(self.p_label,19,20)
+        layout.addWidget(self.right_axis,1,4) 
+        layout.addWidget(self.a_label,0,4)
+        layout.addWidget(self.p_label,2,4)
 
         
 
-        self.update_axes()
+        self.timer = QTimer(self)
+        self.timer.setInterval(int(UPDATE_PERIOD*1000))
+        self.timer.timeout.connect(self.update_axes)
+        self.timer.start()
+
+        #self.update_axes()
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -246,6 +267,7 @@ class CustomMainWindow(QMainWindow):
         self.update_axes()
 
     def update_axes(self):
+        update_needle_positions_randomly()
         self.current_needle = self.needle_combobox.currentText()
         if self.current_needle in needle_positions:
             self.left_axis.set_actual(needle_positions[self.current_needle][0])
