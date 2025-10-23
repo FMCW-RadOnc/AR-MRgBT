@@ -116,6 +116,8 @@ def on_message(ws, message):
             if service == "product/tracking":
                 print("Received a tracking message via WebSocket")
                 save(value)
+            else:
+                print(f"Received non-tracking message with service {service}, ignored")
     except json.JSONDecodeError:
         print(f"Received non-JSON message: {message}")
     except Exception as e:
