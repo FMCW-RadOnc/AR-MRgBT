@@ -28,10 +28,10 @@ import math
 GREEN_THRESHOLD = 50
 YELLOW_THRESHOLD = 200
 max_diff = 1000 # Measurement differences are capped at this value in either direction
-WRITE_TO_FILE = False
 message_q = Queue()
 done = False
 SLOW_DOWN_FACTOR = 10 # 1.0 is realtime, 10.0 is 10x slower than realtime, 0.1 is 10x faster than realtime
+recording = "recording2"
 
 def get_message(file_path):
     m = None
@@ -49,7 +49,7 @@ def imitate_websocket():
         b) Wait x seconds, where x is the difference between the current message time and the next message time multiplied by the slow down factor.
     """
     q = []
-    for path in [os.path.join("recording", x) for x in os.listdir("recording")]:
+    for path in [os.path.join(recording, x) for x in os.listdir(recording)]:
         m = get_message(path)
         t = float(m["acquisition"]["time"])
         q.append((m,t))
@@ -62,16 +62,12 @@ def imitate_websocket():
         time.sleep((next_t - curr_t)*SLOW_DOWN_FACTOR)
     curr_m, curr_t = q[i]
     message_q.put(curr_m)
-    time.sleep(0.5)
     message_q.put("DONE")
-    print("DONE!")
 
 def consumer():
     while True:
-        print(message_q.qsize())
         m = message_q.get()
         if m == "DONE":
-            print("breaking out")
             break
         on_message(m)
         message_q.task_done()
@@ -115,6 +111,15 @@ class AxisVisual(QWidget):
         self.no_actual_data_label.setStyleSheet("background-color: white;")
         self.no_actual_data_label.hide()
         layout.addWidget(self.no_actual_data_label)
+        self.data_label = QLabel("")
+        self.data_label.setFont(QFont('Arial',20))
+        if is_vertical:
+            self.data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)# | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            self.data_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)# | Qt.AlignmentFlag.AlignHCenter)
+        self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0);")
+        self.data_label.hide()
+        layout.addWidget(self.data_label)
 
     def set_actual(self, actual):
         self.actual = actual
@@ -133,11 +138,15 @@ class AxisVisual(QWidget):
         if self.desired is None:
             self.no_actual_data_label.hide()
             self.no_desired_data_label.show()
+            self.data_label.hide()
             return
         elif self.actual is None:
             self.no_desired_data_label.hide()
             self.no_actual_data_label.show()
+            self.data_label.hide()
             return
+        self.data_label.setText(str(round(self.actual - self.desired, 2)))
+        self.data_label.show()
         self.no_actual_data_label.hide()
         self.no_desired_data_label.hide()
 
@@ -171,12 +180,6 @@ class CustomMainWindow(QMainWindow):
         
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-
-        if WRITE_TO_FILE:
-            current_datetime = datetime.now()
-            formatted_datetime_string = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
-            with open("test_data.txt", 'a') as file:
-                file.write("\n" + formatted_datetime_string + "\n")
 
         self.desired_positions = {}
         self.actual_positions = {}
@@ -427,14 +430,14 @@ def process_tracking_data(data):
         x = position["x"]
         y = position["y"]
         z = position["z"]
-        print(f"Emitting x={x}, y={y}, z={z}, coil name={coil_name}")
+        if coil_name == "RX1":
+            print(x,y,z)
         comm.data_signal.emit(x, y, z, coil_name)
 
 
 
 # Should be analogous to on_message in tracking_gui.py
 def on_message(message):
-    print("Received a tracking message via WebSocket")
     process_tracking_data(message)
 
 if __name__ == "__main__":
