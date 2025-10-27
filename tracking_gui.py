@@ -151,6 +151,15 @@ class AxisVisual(QWidget):
         self.no_actual_data_label.setStyleSheet("background-color: white;")
         self.no_actual_data_label.hide()
         layout.addWidget(self.no_actual_data_label)
+        self.data_label = QLabel("")
+        self.data_label.setFont(QFont('Arial',20))
+        if is_vertical:
+            self.data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)# | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            self.data_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)# | Qt.AlignmentFlag.AlignHCenter)
+        self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0);")
+        self.data_label.hide()
+        layout.addWidget(self.data_label)
 
     def set_actual(self, actual):
         self.actual = actual
@@ -169,11 +178,15 @@ class AxisVisual(QWidget):
         if self.desired is None:
             self.no_actual_data_label.hide()
             self.no_desired_data_label.show()
+            self.data_label.hide()
             return
         elif self.actual is None:
             self.no_desired_data_label.hide()
             self.no_actual_data_label.show()
+            self.data_label.hide()
             return
+        self.data_label.setText(str(round(self.actual - self.desired, 2)))
+        self.data_label.show()
         self.no_actual_data_label.hide()
         self.no_desired_data_label.hide()
 
@@ -359,6 +372,11 @@ class CustomMainWindow(QMainWindow):
             self.bottom_axis.set_actual(None)
 
     def update_coil(self,x,y,z,coil_name):
+        if WRITE_TO_FILE:
+            current_datetime = datetime.now()
+            formatted_datetime_string = current_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            with open("test_data.txt", 'a') as file:
+                file.write(f"{formatted_datetime_string}: x = {x}, y = {y}, z = {z}, coil name = {coil_name}\n")
         self.actual_positions[coil_name] = (x,y,z)
         if self.current_needle == coil_name:
             self.left_axis.set_actual(x)
