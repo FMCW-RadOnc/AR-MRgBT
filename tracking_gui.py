@@ -108,13 +108,27 @@ def process_tracking_data(data):
         print("Received NoneType value, skipping processing.")
         return
     
+    """
+    The previous approach isn't correct. To get data, we should do this:
+    1) Get the coil name as before
+    2) Get the "X" projection, "Y" projection, and "Z" projection
+    3) From each projection, get the appropriate "x", "y", or "z" (other values will be zero and should be ignored)
+    """
+
     for coil in data["coils"]:
         coil_name = coil["name"]
-        proj = coil["projections"][0] # Only using 1 projection for now
-        position = proj["coordinates"]["dcs"]["centerPosition"]
-        x = position["x"]
-        y = position["y"]
-        z = position["z"]
+        projs = coil["projections"]
+        for proj in projs:
+            if proj["name"] == "X":
+                x_proj = proj
+            elif proj["name"] == "Y":
+                y_proj = proj
+            elif proj["name"] == "Z":
+                z_proj = proj
+        x = x_proj["coordinates"]["dcs"]["centerPosition"]["x"]
+        y = y_proj["coordinates"]["dcs"]["centerPosition"]["y"]
+        z = z_proj["coordinates"]["dcs"]["centerPosition"]["z"]
+        print(x,y,z, coil_name)
         comm.data_signal.emit(x, y, z, coil_name)
 
 

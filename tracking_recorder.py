@@ -62,15 +62,15 @@ def get_session_id():
         "license": {
             "Name": "MCW",
             "Comment": None,
-            "StartDate": "20240909",
-            "WarnDate": "20250809",
-            "ExpireDate": "20250909",
+            "StartDate": "20240910",
+            "WarnDate": "20260830",
+            "ExpireDate": "20260930",
             "SystemId": "176570",
             "IsReadOptionAvailable": True,
             "IsExecuteOptionAvailable": True,
             "IsAdvancedOptionAvailable": True,
             "Version": "1.0",
-            "Hash": "11mgzffmTbH1poO78kgCN7uRgLZUdXW%2BcrTyTucEsEvbTn5qj8DZLU4NMTlhSkUpk%2FmgDHFpWc4IDCEgkV05Kg%3D%3D"
+            "Hash": "gKEzJrSd1S48prCxwZ%2Bwheju0Tyz67NtLwqe3geWm95BzcOYHFU5V4ThQm%2F%2F0dGdElhMmMKKZX0y7%2BcRF007hg%3D%3D"
         },
         "name": "Test Remote Client"
     }
