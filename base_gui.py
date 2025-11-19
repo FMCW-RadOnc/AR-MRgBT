@@ -44,22 +44,23 @@ class AxisBar(QFrame):
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
+        self.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: 2px solid black; border-radius: 5px;")
         self.no_desired_data_label = QLabel("No\nGoal\nPoint\nData" if is_vertical else "No Goal Point Data", parent=self)
         self.no_desired_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
         self.no_desired_data_label.setFont(QFont('Arial', 20))
-        self.no_desired_data_label.setStyleSheet("background-color: white;")
+        self.no_desired_data_label.setStyleSheet("background-color: white; border: none;")
         self.no_desired_data_label.setWordWrap(True)
         self.no_desired_data_label.hide()
         self.no_actual_data_label = QLabel("No\nCoil\nData" if is_vertical else "No Coil Data", parent=self)
         self.no_actual_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
         self.no_actual_data_label.setFont(QFont('Arial', 20))
-        self.no_actual_data_label.setStyleSheet("background-color: white;")
+        self.no_actual_data_label.setStyleSheet("background-color: white; border: none;")
         self.no_actual_data_label.setWordWrap(True)
         self.no_actual_data_label.hide()
         self.data_label = QLabel("",parent=self)
         self.data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
         self.data_label.setFont(QFont('Arial',15))
-        self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0);")
+        self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: none;")
         self.data_label.hide()
 
     def set_actual(self, actual):
@@ -72,9 +73,11 @@ class AxisBar(QFrame):
     
     def paintEvent(self, _):
         painter = QPainter(self)
-        painter.setPen(self.background_pen)
-        painter.setBrush(QColorConstants.White)
-        painter.drawRect(0,0,self.width(), self.height())
+        #painter.setPen(self.background_pen)
+        #painter.setBrush(QColorConstants.White)
+        
+
+        #painter.drawRect(0,0,self.width(), self.height())
 
         if self.desired is None:
             self.no_actual_data_label.hide()
