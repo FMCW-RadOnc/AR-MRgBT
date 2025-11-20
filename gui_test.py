@@ -5,13 +5,17 @@ from base_gui import TrackingGUIWindow
 
 MIN_VAL = -20
 MAX_VAL = 20
-UPDATE_PERIOD = 0.1 # In seconds
+UPDATE_PERIOD = 2.5 # In seconds
 
 def process_tracking_data():
     for coil in list(window.combobox_needle_set):
+        if coil == "needle tip":
+            continue
         x,y,z = (np.random.rand(3) * (MAX_VAL - MIN_VAL)) + MIN_VAL
         comm.data_signal.emit(x, y, z, coil)
         print(x, y, z, coil)
+    if "needle tip" in window.actual_positions:
+        print(window.actual_positions["needle tip"], "needle tip")
 
 class Communicate(QObject):
     # For simplicity, a signal will just be 3 floats: x,y,z coordinates in dcs

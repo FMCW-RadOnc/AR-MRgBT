@@ -15,11 +15,14 @@ from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 import math
 from PyQt6.QtCore import Qt
 import csv
+import numpy as np
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
 max_diff = 30 # Measurement differences are capped at this value in either direction
+
+DIST_BETWEEN_RX1_AND_NEEDLE_TIP = 20 # Distance in mm between the needle tip and the core nearest to the tip
 
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
@@ -329,6 +332,24 @@ class TrackingGUIWindow(QMainWindow):
             self.left_axis.set_actual(x)
             self.right_axis.set_actual(y)
             self.bottom_axis.set_actual(z)
+
+        """
+        If we have values for both RX1 and RX2, estimate the needle tip position.
+        """
+        if "RX1" in self.actual_positions and "RX2" in self.actual_positions:
+            x_diff = self.actual_positions["RX1"][0] - self.actual_positions["RX2"][0]
+            y_diff = self.actual_positions["RX1"][1] - self.actual_positions["RX2"][1]
+            z_diff = self.actual_positions["RX1"][2] - self.actual_positions["RX2"][2]
+            diff = np.array([x_diff, y_diff, z_diff])
+            unit_diff = diff / np.linalg.norm(diff)
+            x_needle_tip = self.actual_positions["RX1"][0] + unit_diff[0].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            y_needle_tip = self.actual_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            z_needle_tip = self.actual_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            self.actual_positions["needle tip"] = (x_needle_tip, y_needle_tip, z_needle_tip)
+            if self.current_needle == "needle tip":
+                self.left_axis.set_actual(x_needle_tip)
+                self.right_axis.set_actual(y_needle_tip)
+                self.bottom_axis.set_actual(z_needle_tip)
 
     def updated_text(self, _):
         self.current_needle = self.needle_combobox.currentText()
