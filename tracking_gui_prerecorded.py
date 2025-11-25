@@ -89,7 +89,6 @@ def process_tracking_data(data):
         x = x_proj["coordinates"]["dcs"]["centerPosition"]["x"]
         y = y_proj["coordinates"]["dcs"]["centerPosition"]["y"]
         z = z_proj["coordinates"]["dcs"]["centerPosition"]["z"]
-        print(x,y,z, coil_name)
         comm.data_signal.emit(x, y, z, coil_name)
 
 # Should be analogous to on_message in tracking_gui.py
@@ -103,7 +102,7 @@ if __name__ == "__main__":
     app = QApplication([])
     # Create the main GUI window
     window = TrackingGUIWindow()
-    window.load_point_data_from_specified_file("temp_desired.csv")
+    #window.load_point_data_from_specified_file("temp_desired.csv")
     
     comm = Communicate()
     comm.data_signal.connect(window.update_coil)

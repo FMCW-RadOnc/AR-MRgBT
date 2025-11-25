@@ -16,6 +16,15 @@ import math
 from PyQt6.QtCore import Qt
 import csv
 import numpy as np
+import threading
+from kalman_filter import KalmanFilter
+
+KF_PROCESS_NOISE_COEF = 5
+KF_OBSERVATION_NOISE_COEF = 25
+
+# Checks for new targets once every 1000 ms / 1 second
+UPDATE_FREQ_MS = 1000
+DESIRED_CSV_PATH = "desired.csv"
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -164,22 +173,27 @@ class TrackingGUIWindow(QMainWindow):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
         self.desired_positions = {}
-        self.actual_positions = {}
+        self.coil_positions = {"RX1" : None, "RX2" : None}
+        self.needle_tip_position = None
+
+        self.filters : dict[str, KalmanFilter] = {}
+        self.filters["RX1"] = KalmanFilter(5,25)
+        self.filters["RX2"] = KalmanFilter(5,25)
 
         frame = QFrame(self)
         self.setCentralWidget(frame)
 
-        self.load_button = QPushButton("LOAD", parent=self)
-        bold_font = QFont('Arial', 20)
-        bold_font.setBold(True)
-        self.load_button.setFont(bold_font)
-        self.load_button.clicked.connect(self.load_point_data)
-        self.load_button.setStyleSheet("background-color: blue;")
+        #self.load_button = QPushButton("LOAD", parent=self)
+        #bold_font = QFont('Arial', 20)
+        #bold_font.setBold(True)
+        #self.load_button.setFont(bold_font)
+        #self.load_button.clicked.connect(self.load_point_data)
+        #self.load_button.setStyleSheet("background-color: blue;")
 
-        self.needle_combobox = QComboBox(parent=self)
-        self.needle_combobox.setStyleSheet("background-color: white;")
-        self.needle_combobox.setFont(QFont('Arial', 20))
-        self.needle_combobox.activated.connect(self.updated_text)
+        self.target_combobox = QComboBox(parent=self)
+        self.target_combobox.setStyleSheet("background-color: white;")
+        self.target_combobox.setFont(QFont('Arial', 20))
+        self.target_combobox.activated.connect(self.updated_text)
         self.combobox_needle_set = set()
         self.current_needle = None
         
@@ -191,6 +205,8 @@ class TrackingGUIWindow(QMainWindow):
         self.exit_label.setFont(QFont('Arial', 15))
         self.exit_label.setWordWrap(True)
         self.exit_label.setStyleSheet("background-color: lightblue;")
+
+        update_desired(self)
 
         # Adjust the window to full screen based on the screen it's running on
         self.adjust_window_to_screen()
@@ -219,96 +235,15 @@ class TrackingGUIWindow(QMainWindow):
         # Show the window after adjustments
         self.show()
 
-    def load_point_data(self):
-        """
-        1) Prompt user to select a CSV file
-        2) Load CSV file into desired data
-        """
-        file_name, _ = QFileDialog.getOpenFileName(self, 'Open Label File', r"<Default dir>", "Label files (*.csv)")
-        try:
-            with open(file_name, mode='r', encoding='UTF-8') as file:
-                csvFile = csv.reader(file)
-                try:
-                    self.desired_positions = {}
-                    labels = []
-                    for line in csvFile:
-                        label = line[0]
-                        x = float(line[1])
-                        y = float(line[2])
-                        z = float(line[3])
-                        self.desired_positions[label] = (x,y,z)
-                        labels.append(label)
-                    self.needle_combobox.addItems(labels)
-                    self.combobox_needle_set.update(labels)
-                except:
-                    print("Something went wrong with loading ", file_name)
-                    self.desired_positions = {}
-        except:
-            print("No valid file selected")
-
-        self.current_needle = self.needle_combobox.currentText()
-        if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
-        if self.current_needle in self.actual_positions:
-            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
-            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
-            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_actual(None)
-            self.right_axis.set_actual(None)
-            self.bottom_axis.set_actual(None)
-
-    def load_point_data_from_specified_file(self, file_path):
-        try:
-            with open(file_path, mode='r', encoding='UTF-8') as file:
-                csvFile = csv.reader(file)
-                try:
-                    self.desired_positions = {}
-                    labels = []
-                    for line in csvFile:
-                        label = line[0]
-                        x = float(line[1])
-                        y = float(line[2])
-                        z = float(line[3])
-                        self.desired_positions[label] = (x,y,z)
-                        labels.append(label)
-                    self.needle_combobox.addItems(labels)
-                    self.combobox_needle_set.update(labels)
-                except:
-                    print("Something went wrong with loading ", file_path)
-                    self.desired_positions = {}
-        except:
-            print("No valid file selected")
-
-        self.current_needle = self.needle_combobox.currentText()
-        if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
-        if self.current_needle in self.actual_positions:
-            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
-            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
-            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_actual(None)
-            self.right_axis.set_actual(None)
-            self.bottom_axis.set_actual(None)
-
     def set_desired(self, desired_positions):
         self.desired_positions = desired_positions
-        self.needle_combobox.addItems(list(self.desired_positions.keys()))
-        self.combobox_needle_set.update(list(self.desired_positions.keys()))
-        self.current_needle = self.needle_combobox.currentText()
+        for item in list(self.desired_positions.keys()):
+            if item not in self.combobox_needle_set:
+                self.target_combobox.addItem(item)
+                self.combobox_needle_set.add(item)
+        if self.current_needle is not None:
+            self.target_combobox.setCurrentText(self.current_needle)
+        self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
             self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
             self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
@@ -317,42 +252,33 @@ class TrackingGUIWindow(QMainWindow):
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)
             self.bottom_axis.set_desired(None)
-        if self.current_needle in self.actual_positions:
-            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
-            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
-            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_actual(None)
-            self.right_axis.set_actual(None)
-            self.bottom_axis.set_actual(None)
 
     def update_coil(self,x,y,z,coil_name):
-        self.actual_positions[coil_name] = (x,y,z)
-        if self.current_needle == coil_name:
-            self.left_axis.set_actual(x)
-            self.right_axis.set_actual(y)
-            self.bottom_axis.set_actual(z)
+        if (not coil_name != "RX1") and (not coil_name != "RX2"):
+            return
+        
+        self.filters[coil_name].update(x,y,z)
+        self.coil_positions[coil_name] = self.filters[coil_name].get()
 
         """
         If we have values for both RX1 and RX2, estimate the needle tip position.
         """
-        if "RX1" in self.actual_positions and "RX2" in self.actual_positions:
-            x_diff = self.actual_positions["RX1"][0] - self.actual_positions["RX2"][0]
-            y_diff = self.actual_positions["RX1"][1] - self.actual_positions["RX2"][1]
-            z_diff = self.actual_positions["RX1"][2] - self.actual_positions["RX2"][2]
+        if self.coil_positions["RX1"] is not None and self.coil_positions["RX2"] is not None:
+            x_diff = self.coil_positions["RX1"][0] - self.coil_positions["RX2"][0]
+            y_diff = self.coil_positions["RX1"][1] - self.coil_positions["RX2"][1]
+            z_diff = self.coil_positions["RX1"][2] - self.coil_positions["RX2"][2]
             diff = np.array([x_diff, y_diff, z_diff])
             unit_diff = diff / np.linalg.norm(diff)
-            x_needle_tip = self.actual_positions["RX1"][0] + unit_diff[0].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            y_needle_tip = self.actual_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            z_needle_tip = self.actual_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            self.actual_positions["needle tip"] = (x_needle_tip, y_needle_tip, z_needle_tip)
-            if self.current_needle == "needle tip":
-                self.left_axis.set_actual(x_needle_tip)
-                self.right_axis.set_actual(y_needle_tip)
-                self.bottom_axis.set_actual(z_needle_tip)
+            x_needle_tip = self.coil_positions["RX1"][0] + unit_diff[0].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            y_needle_tip = self.coil_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            z_needle_tip = self.coil_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            self.needle_tip_position = (x_needle_tip, y_needle_tip, z_needle_tip)
+            self.left_axis.set_actual(x_needle_tip)
+            self.right_axis.set_actual(y_needle_tip)
+            self.bottom_axis.set_actual(z_needle_tip)
 
     def updated_text(self, _):
-        self.current_needle = self.needle_combobox.currentText()
+        self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
             self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
             self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
@@ -361,14 +287,6 @@ class TrackingGUIWindow(QMainWindow):
             self.left_axis.set_desired(None)
             self.right_axis.set_desired(None)
             self.bottom_axis.set_desired(None)
-        if self.current_needle in self.actual_positions:
-            self.left_axis.set_actual(self.actual_positions[self.current_needle][0])
-            self.right_axis.set_actual(self.actual_positions[self.current_needle][1])
-            self.bottom_axis.set_actual(self.actual_positions[self.current_needle][2])
-        else:
-            self.left_axis.set_actual(None)
-            self.right_axis.set_actual(None)
-            self.bottom_axis.set_actual(None)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -404,12 +322,12 @@ class TrackingGUIWindow(QMainWindow):
             load_button_size = int(load_button_proportion * width_no_margin)
             
             self.exit_label.setGeometry(margin + left_margin_size, margin, exit_label_size, top_row_height)
-            self.needle_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, combobox_size, top_row_height)
-            self.load_button.setGeometry(margin + left_margin_size + exit_label_size + combobox_size, margin, load_button_size, top_row_height)
+            self.target_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, combobox_size, top_row_height)
+            #self.load_button.setGeometry(margin + left_margin_size + exit_label_size + combobox_size, margin, load_button_size, top_row_height)
 
             self.left_axis.setGeometry(margin, margin + top_row_height, d2, d1)
             self.right_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
-            self.bottom_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2) # TODO: Should be centered
+            self.bottom_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
@@ -419,3 +337,24 @@ class TrackingGUIWindow(QMainWindow):
         super(TrackingGUIWindow, self).showEvent(event)
         # Adjust the window to the screen geometry
         self.adjust_window_to_screen()
+
+# Should be run frequently through a thread
+def update_desired(window : TrackingGUIWindow):
+    t = threading.Timer(UPDATE_FREQ_MS / 1000, function=update_desired, args=[window])
+    t.daemon = True
+    t.start()
+    try:
+        with open(DESIRED_CSV_PATH, mode='r', encoding='UTF-8') as file:
+            csvFile = csv.reader(file)    
+            desired_positions = {}
+            labels = []
+            for line in csvFile:
+                label = line[0]
+                x = float(line[1])
+                y = float(line[2])
+                z = float(line[3])
+                desired_positions[label] = (x,y,z)
+                labels.append(label)
+            window.set_desired(desired_positions)
+    except:
+        print("Something went wrong with loading ", DESIRED_CSV_PATH)
