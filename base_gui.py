@@ -1,3 +1,32 @@
+"""
+According to Access-i:
+
+
+
+R <-> L (sagittal axis), DICOM x
+
+A <-> P (coronal axis), DICOM y
+
+F <-> H (transversal axis), DICOM z
+In other literature, I <-> S
+
+
+Current Code:
+
+Left is S (up) I (down)
+
+Right is A (up) P (down)
+
+Bottom is R (left) L (right)
+
+- left should have -z
+- right should have y
+- bottom should have x
+"""
+
+
+
+
 from PyQt6.QtWidgets import (
     QWidget,
     QApplication,
@@ -31,7 +60,7 @@ GREEN_THRESHOLD = 2
 YELLOW_THRESHOLD = 10
 max_diff = 30 # Measurement differences are capped at this value in either direction
 
-DIST_BETWEEN_RX1_AND_NEEDLE_TIP = 20 # Distance in mm between the needle tip and the core nearest to the tip
+DIST_BETWEEN_RX1_AND_NEEDLE_TIP = 10 # Distance in mm between the needle tip and the core nearest to the tip
 
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
@@ -273,9 +302,9 @@ class TrackingGUIWindow(QMainWindow):
             y_needle_tip = self.coil_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
             z_needle_tip = self.coil_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
             self.needle_tip_position = (x_needle_tip, y_needle_tip, z_needle_tip)
-            self.left_axis.set_actual(x_needle_tip)
+            self.left_axis.set_actual(-z_needle_tip)
             self.right_axis.set_actual(y_needle_tip)
-            self.bottom_axis.set_actual(z_needle_tip)
+            self.bottom_axis.set_actual(x_needle_tip)
 
     def updated_text(self, _):
         self.current_needle = self.target_combobox.currentText()
