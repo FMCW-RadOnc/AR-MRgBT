@@ -226,9 +226,9 @@ class TrackingGUIWindow(QMainWindow):
         self.combobox_needle_set = set()
         self.current_needle = None
         
-        self.left_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
-        self.right_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
-        self.bottom_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
+        self.transversal_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
+        self.sagittal_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
+        self.coronal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
 
         self.exit_label = QLabel("Hit the Escape Key to exit program.", parent=self)
         self.exit_label.setFont(QFont('Arial', 15))
@@ -274,48 +274,60 @@ class TrackingGUIWindow(QMainWindow):
             self.target_combobox.setCurrentText(self.current_needle)
         self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
+            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
+            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
         else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
+            self.transversal_axis.set_desired(None)
+            self.sagittal_axis.set_desired(None)
+            self.coronal_axis.set_desired(None)
 
     def update_coil(self,x,y,z,coil_name):
         if (not coil_name != "RX1") and (not coil_name != "RX2"):
             return
         
-        self.filters[coil_name].update(x,y,z)
+        # Convert from x,y,z to DCM
+        measurement = {
+            "transversal" : -z,
+            "coronal" : x,
+            "sagittal" : y
+        }
+
+        self.filters[coil_name].update(measurement)
         self.coil_positions[coil_name] = self.filters[coil_name].get()
 
         """
         If we have values for both RX1 and RX2, estimate the needle tip position.
         """
         if self.coil_positions["RX1"] is not None and self.coil_positions["RX2"] is not None:
-            x_diff = self.coil_positions["RX1"][0] - self.coil_positions["RX2"][0]
-            y_diff = self.coil_positions["RX1"][1] - self.coil_positions["RX2"][1]
-            z_diff = self.coil_positions["RX1"][2] - self.coil_positions["RX2"][2]
-            diff = np.array([x_diff, y_diff, z_diff])
+            transversal_diff = self.coil_positions["RX1"]["transversal"] - self.coil_positions["RX2"]["transversal"]
+            coronal_diff = self.coil_positions["RX1"]["coronal"] - self.coil_positions["RX2"]["coronal"]
+            sagittal_diff = self.coil_positions["RX1"]["sagittal"] - self.coil_positions["RX2"]["sagittal"]
+            diff = np.array([transversal_diff, coronal_diff, sagittal_diff], dtype=float)
             unit_diff = diff / np.linalg.norm(diff)
-            x_needle_tip = self.coil_positions["RX1"][0] + unit_diff[0].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            y_needle_tip = self.coil_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            z_needle_tip = self.coil_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            self.needle_tip_position = (x_needle_tip, y_needle_tip, z_needle_tip)
-            self.left_axis.set_actual(-z_needle_tip)
-            self.right_axis.set_actual(y_needle_tip)
-            self.bottom_axis.set_actual(x_needle_tip)
+            transversal_unit_diff, coronal_unit_diff, sagittal_unit_diff = unit_diff.tolist()
+            transversal_needle_tip = self.coil_positions["RX1"]["transversal"] + transversal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            coronal_needle_tip = self.coil_positions["RX1"]["coronal"] + coronal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            sagittal_needle_tip = self.coil_positions["RX1"]["sagittal"] + sagittal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            self.needle_tip_position = {
+                "transversal" : transversal_needle_tip,
+                "coronal" : coronal_needle_tip,
+                "sagittal" : sagittal_needle_tip
+            }
+            self.transversal_axis.set_actual(transversal_needle_tip)
+            self.sagittal_axis.set_actual(sagittal_needle_tip)
+            self.coronal_axis.set_actual(coronal_needle_tip)
 
     def updated_text(self, _):
         self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
+            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
+            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
         else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
+            self.transversal_axis.set_desired(None)
+            self.sagittal_axis.set_desired(None)
+            self.coronal_axis.set_desired(None)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -354,9 +366,9 @@ class TrackingGUIWindow(QMainWindow):
             self.target_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, combobox_size, top_row_height)
             #self.load_button.setGeometry(margin + left_margin_size + exit_label_size + combobox_size, margin, load_button_size, top_row_height)
 
-            self.left_axis.setGeometry(margin, margin + top_row_height, d2, d1)
-            self.right_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
-            self.bottom_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
+            self.transversal_axis.setGeometry(margin, margin + top_row_height, d2, d1)
+            self.sagittal_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
+            self.coronal_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
@@ -379,10 +391,14 @@ def update_desired(window : TrackingGUIWindow):
             labels = []
             for line in csvFile:
                 label = line[0]
-                x = float(line[1])
-                y = float(line[2])
-                z = float(line[3])
-                desired_positions[label] = (x,y,z)
+                transversal = float(line[1])
+                coronal = float(line[2])
+                sagittal = float(line[3])
+                desired_positions[label] = {
+                    "transversal" : transversal,
+                    "coronal" : coronal,
+                    "sagittal" : sagittal
+                }
                 labels.append(label)
             window.set_desired(desired_positions)
     except:
