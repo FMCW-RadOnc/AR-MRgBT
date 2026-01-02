@@ -1,0 +1,10 @@
+NOTE: 
+
+Make sure that a persistent route is set in powershell. Use this command:
+route -p add 10.243.146.24 mask 255.255.255.255 192.168.182.1 IF 3
+
+3 refers to this interface:
+3...00 1b 41 0a 0a 20 ......Intel(R) Ethernet Controller (3) I225-V
+
+To check if it exists: 
+route print
