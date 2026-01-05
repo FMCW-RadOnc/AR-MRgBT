@@ -27,6 +27,7 @@ Bottom is R (left) L (right)
 
 
 
+import os
 from PyQt6.QtWidgets import (
     QWidget,
     QApplication,
@@ -36,8 +37,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
-    QPushButton,
-    QFileDialog,
     QMessageBox
 )
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
@@ -47,13 +46,13 @@ import csv
 import numpy as np
 import threading
 from kalman_filter import KalmanFilter
+from datetime import datetime
 
 KF_PROCESS_NOISE_COEF = 5
 KF_OBSERVATION_NOISE_COEF = 25
 
 # Checks for new targets once every 1000 ms / 1 second
 UPDATE_FREQ_MS = 1000
-DESIRED_CSV_PATH = "desired.csv"
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -286,7 +285,7 @@ class TrackingGUIWindow(QMainWindow):
         if (not coil_name != "RX1") and (not coil_name != "RX2"):
             return
         
-        # Convert from x,y,z to DCM
+        # Convert from x,y,z to DCM TODO
         measurement = {
             "transversal" : -z,
             "coronal" : x,
@@ -384,8 +383,11 @@ def update_desired(window : TrackingGUIWindow):
     t = threading.Timer(UPDATE_FREQ_MS / 1000, function=update_desired, args=[window])
     t.daemon = True
     t.start()
+    today_str = datetime.today().strftime('%m_%d_%Y')
+    desired_data_path = os.path.join("MIMData", f"{today_str}_desired.csv") 
     try:
-        with open(DESIRED_CSV_PATH, mode='r', encoding='UTF-8') as file:
+        
+        with open(desired_data_path, mode='r', encoding='UTF-8') as file:
             csvFile = csv.reader(file)    
             desired_positions = {}
             labels = []
@@ -402,4 +404,4 @@ def update_desired(window : TrackingGUIWindow):
                 labels.append(label)
             window.set_desired(desired_positions)
     except:
-        print("Something went wrong with loading ", DESIRED_CSV_PATH)
+        print("Something went wrong with loading ", desired_data_path)
