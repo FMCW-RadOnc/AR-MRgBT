@@ -6,7 +6,7 @@ we also keep track of velocities and accelerations for each axis.
 """
 
 import numpy as np
-from typing import Tuple
+from typing import Dict, Tuple
 import time
 
 MAX_DIST_DIFF = 200 # Maximum speed in mm per second allowed between updates. Anything higher results in the newest measurement being ignored. 5000 mm/s ~ 0.44 m/h
@@ -45,12 +45,15 @@ class KalmanFilter:
         self.R = np.identity(3) * observation_noise_coef # TODO: Placeholder for now, we trust predictions more
         self.prev_time = time.perf_counter()
 
-    def update(self, x : float, y : float, z : float):
+    def update(self, measurement : Dict[str, float]):
         
+        transversal = measurement["transversal"]
+        coronal = measurement["coronal"]
+        sagittal = measurement["sagittal"]
 
         # For the start, we trust our first measurement
         if self.state_estimate is None:
-            self.state_estimate = np.array([x,0,0,y,0,0,z,0,0]).reshape(-1,1)
+            self.state_estimate = np.array([transversal,0,0,coronal,0,0,sagittal,0,0]).reshape(-1,1)
             self.covariance = np.identity(9) * 0.1
             return
 
@@ -61,7 +64,7 @@ class KalmanFilter:
 
         # Quick sanity check. If the new measurement is too far away from the previous one, ignore it entirely.
         prev_loc = self.state_estimate[::3].flatten()
-        new_loc = np.array([x,y,z])
+        new_loc = np.array([transversal,coronal,sagittal])
         dist = np.linalg.norm(prev_loc - new_loc)
         #print(prev_loc)
         #print(new_loc)
@@ -84,14 +87,19 @@ class KalmanFilter:
         pred_covariance = self.covariance + self.Q
 
         # UPDATE
-        z = np.array([x,y,z]).reshape(-1,1)
-        innovation = z - H @ pred_x 
+        sagittal = np.array([transversal,coronal,sagittal]).reshape(-1,1)
+        innovation = sagittal - H @ pred_x 
         innovation_cov = H @ pred_covariance @ H.T + self.R
         kalman_gain = pred_covariance @ H.T @ np.linalg.inv(innovation_cov)
         #print(kalman_gain)
         self.state_estimate = pred_x + kalman_gain @ innovation
         self.covariance = (np.identity(9) - kalman_gain @ H) @ pred_covariance
 
-    def get(self) -> Tuple[float,float,float]:
-        return (self.state_estimate[0].item(), self.state_estimate[3].item(), self.state_estimate[6].item())
+    def get(self) -> Dict[str,float]:
+        #return (self.state_estimate[0].item(), self.state_estimate[3].item(), self.state_estimate[6].item())
+        return {
+            "transversal" : self.state_estimate[0].item(),
+            "coronal" : self.state_estimate[3].item(),
+            "sagittal" : self.state_estimate[6].item()
+        }
     

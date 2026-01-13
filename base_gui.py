@@ -27,6 +27,7 @@ Bottom is R (left) L (right)
 
 
 
+import os
 from PyQt6.QtWidgets import (
     QWidget,
     QApplication,
@@ -36,8 +37,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
-    QPushButton,
-    QFileDialog,
     QMessageBox
 )
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
@@ -47,13 +46,16 @@ import csv
 import numpy as np
 import threading
 from kalman_filter import KalmanFilter
+from datetime import datetime
+
+ROLLING_AVERAGE_PERIOD = 30
 
 KF_PROCESS_NOISE_COEF = 5
 KF_OBSERVATION_NOISE_COEF = 25
 
+
 # Checks for new targets once every 1000 ms / 1 second
 UPDATE_FREQ_MS = 1000
-DESIRED_CSV_PATH = "desired.csv"
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -206,18 +208,17 @@ class TrackingGUIWindow(QMainWindow):
         self.needle_tip_position = None
 
         self.filters : dict[str, KalmanFilter] = {}
-        self.filters["RX1"] = KalmanFilter(5,25)
-        self.filters["RX2"] = KalmanFilter(5,25)
+        self.previous_measurements : dict[str, dict[str, list[float]]] = {}
 
         frame = QFrame(self)
         self.setCentralWidget(frame)
 
-        #self.load_button = QPushButton("LOAD", parent=self)
-        #bold_font = QFont('Arial', 20)
-        #bold_font.setBold(True)
-        #self.load_button.setFont(bold_font)
-        #self.load_button.clicked.connect(self.load_point_data)
-        #self.load_button.setStyleSheet("background-color: blue;")
+        self.filter_combobox = QComboBox(parent=self)
+        self.filter_combobox.setStyleSheet("background-color: white;")
+        self.filter_combobox.setFont(QFont('Arial', 20))
+        self.filter_combobox.activated.connect(self.updated_filter)
+        self.filter_combobox.addItems(["No Filter", "Rolling Average", "Kalman Filter"])
+        self.filter_mode = "No Filter"
 
         self.target_combobox = QComboBox(parent=self)
         self.target_combobox.setStyleSheet("background-color: white;")
@@ -226,9 +227,9 @@ class TrackingGUIWindow(QMainWindow):
         self.combobox_needle_set = set()
         self.current_needle = None
         
-        self.left_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
-        self.right_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
-        self.bottom_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
+        self.transversal_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
+        self.sagittal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
+        self.coronal_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
 
         self.exit_label = QLabel("Hit the Escape Key to exit program.", parent=self)
         self.exit_label.setFont(QFont('Arial', 15))
@@ -274,48 +275,94 @@ class TrackingGUIWindow(QMainWindow):
             self.target_combobox.setCurrentText(self.current_needle)
         self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
+            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
+            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
         else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
+            self.transversal_axis.set_desired(None)
+            self.sagittal_axis.set_desired(None)
+            self.coronal_axis.set_desired(None)
 
     def update_coil(self,x,y,z,coil_name):
         if (not coil_name != "RX1") and (not coil_name != "RX2"):
             return
         
-        self.filters[coil_name].update(x,y,z)
-        self.coil_positions[coil_name] = self.filters[coil_name].get()
+        # Convert from x,y,z to DCM TODO
+        measurement = {
+            "transversal" : z,
+            "coronal" : y,
+            "sagittal" : x
+        }
+
+        if self.filter_mode == "No Filter":
+            self.coil_positions[coil_name] = measurement
+        elif self.filter_mode == "Rolling Average":
+            self.previous_measurements[coil_name]["transversal"].append(measurement["transversal"])
+            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["transversal"].pop(0)
+            self.previous_measurements[coil_name]["coronal"].append(measurement["coronal"])
+            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["coronal"].pop(0)
+            self.previous_measurements[coil_name]["sagittal"].append(measurement["sagittal"])
+            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["sagittal"].pop(0)
+            self.coil_positions[coil_name] = {
+                "transversal" : sum(self.previous_measurements[coil_name]["transversal"]) / len(self.previous_measurements[coil_name]["transversal"]),
+                "coronal" : sum(self.previous_measurements[coil_name]["coronal"]) / len(self.previous_measurements[coil_name]["coronal"]),
+                "sagittal" : sum(self.previous_measurements[coil_name]["sagittal"]) / len(self.previous_measurements[coil_name]["sagittal"])
+            }
+        else:
+            self.filters[coil_name].update(measurement)
+            self.coil_positions[coil_name] = self.filters[coil_name].get()
+
+        
 
         """
         If we have values for both RX1 and RX2, estimate the needle tip position.
         """
         if self.coil_positions["RX1"] is not None and self.coil_positions["RX2"] is not None:
-            x_diff = self.coil_positions["RX1"][0] - self.coil_positions["RX2"][0]
-            y_diff = self.coil_positions["RX1"][1] - self.coil_positions["RX2"][1]
-            z_diff = self.coil_positions["RX1"][2] - self.coil_positions["RX2"][2]
-            diff = np.array([x_diff, y_diff, z_diff])
+            transversal_diff = self.coil_positions["RX1"]["transversal"] - self.coil_positions["RX2"]["transversal"]
+            coronal_diff = self.coil_positions["RX1"]["coronal"] - self.coil_positions["RX2"]["coronal"]
+            sagittal_diff = self.coil_positions["RX1"]["sagittal"] - self.coil_positions["RX2"]["sagittal"]
+            diff = np.array([transversal_diff, coronal_diff, sagittal_diff], dtype=float)
             unit_diff = diff / np.linalg.norm(diff)
-            x_needle_tip = self.coil_positions["RX1"][0] + unit_diff[0].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            y_needle_tip = self.coil_positions["RX1"][1] + unit_diff[1].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            z_needle_tip = self.coil_positions["RX1"][2] + unit_diff[2].item()*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            self.needle_tip_position = (x_needle_tip, y_needle_tip, z_needle_tip)
-            self.left_axis.set_actual(-z_needle_tip)
-            self.right_axis.set_actual(y_needle_tip)
-            self.bottom_axis.set_actual(x_needle_tip)
+            transversal_unit_diff, coronal_unit_diff, sagittal_unit_diff = unit_diff.tolist()
+            transversal_needle_tip = self.coil_positions["RX1"]["transversal"] + transversal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            coronal_needle_tip = self.coil_positions["RX1"]["coronal"] + coronal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            sagittal_needle_tip = self.coil_positions["RX1"]["sagittal"] + sagittal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            self.needle_tip_position = {
+                "transversal" : transversal_needle_tip,
+                "coronal" : coronal_needle_tip,
+                "sagittal" : sagittal_needle_tip
+            }
+            self.transversal_axis.set_actual(transversal_needle_tip)
+            self.sagittal_axis.set_actual(sagittal_needle_tip)
+            self.coronal_axis.set_actual(coronal_needle_tip)
 
     def updated_text(self, _):
         self.current_needle = self.target_combobox.currentText()
         if self.current_needle in self.desired_positions:
-            self.left_axis.set_desired(self.desired_positions[self.current_needle][0])
-            self.right_axis.set_desired(self.desired_positions[self.current_needle][1])
-            self.bottom_axis.set_desired(self.desired_positions[self.current_needle][2])
+            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
+            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
+            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
         else:
-            self.left_axis.set_desired(None)
-            self.right_axis.set_desired(None)
-            self.bottom_axis.set_desired(None)
+            self.transversal_axis.set_desired(None)
+            self.sagittal_axis.set_desired(None)
+            self.coronal_axis.set_desired(None)
+
+    def updated_filter(self, _):
+        self.filter_mode = self.filter_combobox.currentText()
+        if self.filter_mode == "No Filter":
+            pass
+        elif self.filter_mode == "Rolling Average":
+            self.previous_measurements : dict[str, dict[str, list[float]]] = {}
+            self.previous_measurements["RX1"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
+            self.previous_measurements["RX2"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
+        else:
+            # Kalman Filter
+            self.filters : dict[str, KalmanFilter] = {}
+            self.filters["RX1"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
+            self.filters["RX2"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
 
     def adjust_window_to_screen(self):
         # Get the screen where the window is displayed
@@ -347,16 +394,16 @@ class TrackingGUIWindow(QMainWindow):
 
             left_margin_size = int(left_margin_proportion * width_no_margin)
             exit_label_size = int(exit_label_proportion * width_no_margin)
-            combobox_size = int(combobox_proportion * width_no_margin)
-            load_button_size = int(load_button_proportion * width_no_margin)
+            target_combobox_size = int(combobox_proportion * width_no_margin)
+            filter_combobox_size = int(load_button_proportion * width_no_margin)
             
             self.exit_label.setGeometry(margin + left_margin_size, margin, exit_label_size, top_row_height)
-            self.target_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, combobox_size, top_row_height)
-            #self.load_button.setGeometry(margin + left_margin_size + exit_label_size + combobox_size, margin, load_button_size, top_row_height)
+            self.target_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, target_combobox_size, top_row_height)
+            self.filter_combobox.setGeometry(margin + left_margin_size + exit_label_size + target_combobox_size, margin, filter_combobox_size, top_row_height)
 
-            self.left_axis.setGeometry(margin, margin + top_row_height, d2, d1)
-            self.right_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
-            self.bottom_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
+            self.transversal_axis.setGeometry(margin, margin + top_row_height, d2, d1)
+            self.coronal_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
+            self.sagittal_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
@@ -372,18 +419,25 @@ def update_desired(window : TrackingGUIWindow):
     t = threading.Timer(UPDATE_FREQ_MS / 1000, function=update_desired, args=[window])
     t.daemon = True
     t.start()
+    today_str = datetime.today().strftime('%m_%d_%Y')
+    desired_data_path = os.path.join("MIMData", f"{today_str}_desired.csv") 
     try:
-        with open(DESIRED_CSV_PATH, mode='r', encoding='UTF-8') as file:
+        
+        with open(desired_data_path, mode='r', encoding='UTF-8') as file:
             csvFile = csv.reader(file)    
             desired_positions = {}
             labels = []
             for line in csvFile:
                 label = line[0]
-                x = float(line[1])
-                y = float(line[2])
-                z = float(line[3])
-                desired_positions[label] = (x,y,z)
+                transversal = float(line[1])
+                coronal = -float(line[3])
+                sagittal = -float(line[2])
+                desired_positions[label] = {
+                    "transversal" : transversal,
+                    "coronal" : coronal,
+                    "sagittal" : sagittal
+                }
                 labels.append(label)
             window.set_desired(desired_positions)
     except:
-        print("Something went wrong with loading ", DESIRED_CSV_PATH)
+        print("Something went wrong with loading ", desired_data_path)
