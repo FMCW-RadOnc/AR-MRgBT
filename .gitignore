@@ -171,3 +171,7 @@ cython_debug/
 .pypirc
 
 *.json
+MIMData
+*.dcm
+slice displacement.txt
+tracking_data*.txt
