@@ -173,3 +173,5 @@ cython_debug/
 *.json
 MIMData
 *.dcm
+slice displacement.txt
+tracking_data*.txt
