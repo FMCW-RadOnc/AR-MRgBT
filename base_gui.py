@@ -47,6 +47,7 @@ import numpy as np
 import threading
 from kalman_filter import KalmanFilter
 from datetime import datetime
+import statistics
 
 ROLLING_AVERAGE_PERIOD = 30
 
@@ -217,13 +218,14 @@ class TrackingGUIWindow(QMainWindow):
         self.filter_combobox.setStyleSheet("background-color: white;")
         self.filter_combobox.setFont(QFont('Arial', 20))
         self.filter_combobox.activated.connect(self.updated_filter)
-        self.filter_combobox.addItems(["No Filter", "Rolling Average", "Kalman Filter"])
+        self.filter_combobox.addItems(["No Filter", "Rolling Average", "Rolling Median", "Kalman Filter"])
         self.filter_mode = "No Filter"
 
         self.target_combobox = QComboBox(parent=self)
         self.target_combobox.setStyleSheet("background-color: white;")
         self.target_combobox.setFont(QFont('Arial', 20))
         self.target_combobox.activated.connect(self.updated_text)
+        self.target_combobox.activated.connect(self.updated_filter)
         self.combobox_needle_set = set()
         self.current_needle = None
         
@@ -307,9 +309,24 @@ class TrackingGUIWindow(QMainWindow):
             if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_AVERAGE_PERIOD:
                 self.previous_measurements[coil_name]["sagittal"].pop(0)
             self.coil_positions[coil_name] = {
-                "transversal" : sum(self.previous_measurements[coil_name]["transversal"]) / len(self.previous_measurements[coil_name]["transversal"]),
-                "coronal" : sum(self.previous_measurements[coil_name]["coronal"]) / len(self.previous_measurements[coil_name]["coronal"]),
-                "sagittal" : sum(self.previous_measurements[coil_name]["sagittal"]) / len(self.previous_measurements[coil_name]["sagittal"])
+                "transversal" : statistics.mean(self.previous_measurements[coil_name]["transversal"]),
+                "coronal" : statistics.mean(self.previous_measurements[coil_name]["coronal"]),
+                "sagittal" : statistics.mean(self.previous_measurements[coil_name]["sagittal"])
+            }
+        elif self.filter_mode == "Rolling Median":
+            self.previous_measurements[coil_name]["transversal"].append(measurement["transversal"])
+            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["transversal"].pop(0)
+            self.previous_measurements[coil_name]["coronal"].append(measurement["coronal"])
+            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["coronal"].pop(0)
+            self.previous_measurements[coil_name]["sagittal"].append(measurement["sagittal"])
+            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_AVERAGE_PERIOD:
+                self.previous_measurements[coil_name]["sagittal"].pop(0)
+            self.coil_positions[coil_name] = {
+                "transversal" : statistics.median(self.previous_measurements[coil_name]["transversal"]),
+                "coronal" : statistics.median(self.previous_measurements[coil_name]["coronal"]),
+                "sagittal" : statistics.median(self.previous_measurements[coil_name]["sagittal"])
             }
         else:
             self.filters[coil_name].update(measurement)
@@ -354,7 +371,7 @@ class TrackingGUIWindow(QMainWindow):
         self.filter_mode = self.filter_combobox.currentText()
         if self.filter_mode == "No Filter":
             pass
-        elif self.filter_mode == "Rolling Average":
+        elif self.filter_mode == "Rolling Average" or self.filter_mode == "Rolling Median":
             self.previous_measurements : dict[str, dict[str, list[float]]] = {}
             self.previous_measurements["RX1"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
             self.previous_measurements["RX2"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
