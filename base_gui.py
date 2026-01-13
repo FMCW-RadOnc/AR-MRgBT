@@ -48,7 +48,7 @@ import threading
 from kalman_filter import KalmanFilter
 from datetime import datetime
 
-ROLLING_AVERAGE_PERIOD = 4
+ROLLING_AVERAGE_PERIOD = 30
 
 KF_PROCESS_NOISE_COEF = 5
 KF_OBSERVATION_NOISE_COEF = 25
@@ -228,8 +228,8 @@ class TrackingGUIWindow(QMainWindow):
         self.current_needle = None
         
         self.transversal_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
-        self.sagittal_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
-        self.coronal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
+        self.sagittal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
+        self.coronal_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
 
         self.exit_label = QLabel("Hit the Escape Key to exit program.", parent=self)
         self.exit_label.setFont(QFont('Arial', 15))
@@ -289,9 +289,9 @@ class TrackingGUIWindow(QMainWindow):
         
         # Convert from x,y,z to DCM TODO
         measurement = {
-            "transversal" : -z,
-            "coronal" : x,
-            "sagittal" : y
+            "transversal" : z,
+            "coronal" : y,
+            "sagittal" : x
         }
 
         if self.filter_mode == "No Filter":
@@ -402,8 +402,8 @@ class TrackingGUIWindow(QMainWindow):
             self.filter_combobox.setGeometry(margin + left_margin_size + exit_label_size + target_combobox_size, margin, filter_combobox_size, top_row_height)
 
             self.transversal_axis.setGeometry(margin, margin + top_row_height, d2, d1)
-            self.sagittal_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
-            self.coronal_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
+            self.coronal_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
+            self.sagittal_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
@@ -430,8 +430,8 @@ def update_desired(window : TrackingGUIWindow):
             for line in csvFile:
                 label = line[0]
                 transversal = float(line[1])
-                coronal = float(line[2])
-                sagittal = float(line[3])
+                coronal = -float(line[3])
+                sagittal = -float(line[2])
                 desired_positions[label] = {
                     "transversal" : transversal,
                     "coronal" : coronal,
