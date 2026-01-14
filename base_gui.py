@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 import math
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 import csv
 import numpy as np
 import threading
@@ -49,14 +49,16 @@ from kalman_filter import KalmanFilter
 from datetime import datetime
 import statistics
 
-ROLLING_AVERAGE_PERIOD = 30
+ROLLING_INTERVAL = 7
 
 KF_PROCESS_NOISE_COEF = 5
 KF_OBSERVATION_NOISE_COEF = 25
 
-
 # Checks for new targets once every 1000 ms / 1 second
-UPDATE_FREQ_MS = 1000
+TARGET_UPDATE_FREQ_MS = 1000
+
+# Update Axis Bars once every 1000 ms / 1 second
+DISPLAY_UPDATE_FREQ_MS = 1000
 
 # Maximum difference in mm allowed for a particular color to show on a given axis
 GREEN_THRESHOLD = 2
@@ -107,13 +109,19 @@ class AxisBar(QFrame):
         self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: none;")
         self.data_label.hide()
 
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(DISPLAY_UPDATE_FREQ_MS)
+        self.update_timer.timeout.connect(self.update)
+        self.update_timer.start()
+
+
     def set_actual(self, actual):
         self.actual = actual
-        self.update()
+        #self.update()
 
     def set_desired(self, desired):
         self.desired = desired
-        self.update()
+        #self.update()
     
     def paintEvent(self, _):
         painter = QPainter(self)
@@ -300,13 +308,13 @@ class TrackingGUIWindow(QMainWindow):
             self.coil_positions[coil_name] = measurement
         elif self.filter_mode == "Rolling Average":
             self.previous_measurements[coil_name]["transversal"].append(measurement["transversal"])
-            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["transversal"].pop(0)
             self.previous_measurements[coil_name]["coronal"].append(measurement["coronal"])
-            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["coronal"].pop(0)
             self.previous_measurements[coil_name]["sagittal"].append(measurement["sagittal"])
-            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["sagittal"].pop(0)
             self.coil_positions[coil_name] = {
                 "transversal" : statistics.mean(self.previous_measurements[coil_name]["transversal"]),
@@ -315,13 +323,13 @@ class TrackingGUIWindow(QMainWindow):
             }
         elif self.filter_mode == "Rolling Median":
             self.previous_measurements[coil_name]["transversal"].append(measurement["transversal"])
-            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["transversal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["transversal"].pop(0)
             self.previous_measurements[coil_name]["coronal"].append(measurement["coronal"])
-            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["coronal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["coronal"].pop(0)
             self.previous_measurements[coil_name]["sagittal"].append(measurement["sagittal"])
-            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_AVERAGE_PERIOD:
+            if len(self.previous_measurements[coil_name]["sagittal"]) > ROLLING_INTERVAL:
                 self.previous_measurements[coil_name]["sagittal"].pop(0)
             self.coil_positions[coil_name] = {
                 "transversal" : statistics.median(self.previous_measurements[coil_name]["transversal"]),
@@ -433,7 +441,7 @@ class TrackingGUIWindow(QMainWindow):
 
 # Should be run frequently through a thread
 def update_desired(window : TrackingGUIWindow):
-    t = threading.Timer(UPDATE_FREQ_MS / 1000, function=update_desired, args=[window])
+    t = threading.Timer(TARGET_UPDATE_FREQ_MS / 1000, function=update_desired, args=[window])
     t.daemon = True
     t.start()
     today_str = datetime.today().strftime('%m_%d_%Y')
