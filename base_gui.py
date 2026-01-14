@@ -49,7 +49,7 @@ from kalman_filter import KalmanFilter
 from datetime import datetime
 import statistics
 
-ROLLING_INTERVAL = 30
+ROLLING_INTERVAL = 7
 
 KF_PROCESS_NOISE_COEF = 5
 KF_OBSERVATION_NOISE_COEF = 25
