@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
 import math
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QTime
 import csv
 import numpy as np
 import threading
@@ -236,6 +236,14 @@ class TrackingGUIWindow(QMainWindow):
         self.target_combobox.activated.connect(self.updated_filter)
         self.combobox_needle_set = set()
         self.current_needle = None
+
+        self.digital_clock = QLabel(parent=self)
+        self.digital_clock.setStyleSheet("background-color: black; color: white;")
+        self.digital_clock.setFont(QFont('Arial', 30))
+        self.digital_clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.updateTime)
+        self.timer.start(1000)
         
         self.transversal_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
         self.sagittal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
@@ -253,6 +261,11 @@ class TrackingGUIWindow(QMainWindow):
 
         # Show the window after adjustments
         self.show()
+
+    def updateTime(self):
+        current_time = QTime.currentTime()
+        label_time = current_time.toString('hh:mm:ss')
+        self.digital_clock.setText(label_time)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -403,32 +416,22 @@ class TrackingGUIWindow(QMainWindow):
             width_no_margin = width - 2*margin
             height_no_margin = height - 2*margin
 
-            # TODO: Calculate axis dimensions and use those for each axis. 
-            d1 = int(min(width_no_margin, height_no_margin) * 0.8)
-            d2 = int(min(width_no_margin, height_no_margin) * 0.1)
-
-            # Proportions for the top row widths
-            left_margin_proportion = 0.1
-            exit_label_proportion = 0.2
-            combobox_proportion = 0.4
-            load_button_proportion = 0.2
-            # Rest is right margin = 0.1
-
             # Proportion for top row height
-            top_row_height = int(0.1 * height_no_margin)
-
-            left_margin_size = int(left_margin_proportion * width_no_margin)
-            exit_label_size = int(exit_label_proportion * width_no_margin)
-            target_combobox_size = int(combobox_proportion * width_no_margin)
-            filter_combobox_size = int(load_button_proportion * width_no_margin)
+            corner_height = int(0.1 * height_no_margin)
+            corner_width = int(0.15 * width_no_margin)
             
-            self.exit_label.setGeometry(margin + left_margin_size, margin, exit_label_size, top_row_height)
-            self.target_combobox.setGeometry(margin + left_margin_size + exit_label_size, margin, target_combobox_size, top_row_height)
-            self.filter_combobox.setGeometry(margin + left_margin_size + exit_label_size + target_combobox_size, margin, filter_combobox_size, top_row_height)
-
-            self.transversal_axis.setGeometry(margin, margin + top_row_height, d2, d1)
-            self.coronal_axis.setGeometry(width_no_margin - d2 - margin, margin + top_row_height, d2, d1)
-            self.sagittal_axis.setGeometry(margin + int((width_no_margin - d1) / 2), height_no_margin - d2 - margin, d1, d2)
+            """
+            Clock should be in top left, exit label should be top right,
+            current target should be in bottom left (and smaller), current filter should be in bottom right
+            """
+            self.digital_clock.setGeometry(margin, margin, corner_width, corner_height)
+            self.exit_label.setGeometry(width_no_margin + margin - corner_width, margin, corner_width, corner_height)
+            self.target_combobox.setGeometry(margin, height_no_margin + margin - corner_height, corner_width, corner_height)
+            self.filter_combobox.setGeometry(width_no_margin + margin - corner_width, height_no_margin + margin - corner_height, corner_width, corner_height)
+            
+            self.transversal_axis.setGeometry(margin, margin + corner_height, int(corner_width / 2), height_no_margin - corner_height*2)
+            self.coronal_axis.setGeometry(width_no_margin + margin - int(corner_width / 2), margin + corner_height, int(corner_width / 2), height_no_margin - corner_height*2)
+            self.sagittal_axis.setGeometry(margin + corner_width, height_no_margin + margin - corner_height, width_no_margin - corner_width*2, corner_height)
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
