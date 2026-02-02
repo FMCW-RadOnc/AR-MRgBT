@@ -1,0 +1,18 @@
+- rolling_interval
+    * For the "Rolling Average" and "Rolling Median" filter, how many samples to take into account
+- kf_process_noise_coef_mm
+    * For the "Kalman Filter" filter, what process noise (in mm) to assume
+- kf_observation_noise_coef_mm
+    * For the "Kalman Filter" filter, what observation noise (in mm) to assume
+- target_update_freq_ms
+    * How often to update the list of possible targets (in ms) 
+- display_update_freq_ms
+    * How often to update the axis displays (in ms)
+- green_threshold_mm
+    * The maximum possible distance from the target (in mm) for the axis display to be green
+- yellow_threshold_mm
+    * The maximum possible distance from the target (in mm) for the axis display to be yellow
+- max_threshold_mm
+    * The minimum distance from the target (in mm) to fully fill the axis display.
+- dist_between_rx1_and_needle_tip_mm
+    * The physical distance between the RX1 core and the tip of the needle (in mm)

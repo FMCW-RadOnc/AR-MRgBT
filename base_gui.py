@@ -48,24 +48,31 @@ import threading
 from kalman_filter import KalmanFilter
 from datetime import datetime
 import statistics
+import json
 
-ROLLING_INTERVAL = 7
+ROLLING_INTERVAL = None
+KF_PROCESS_NOISE_COEF = None
+KF_OBSERVATION_NOISE_COEF = None
+TARGET_UPDATE_FREQ_MS = None
+DISPLAY_UPDATE_FREQ_MS = None
+GREEN_THRESHOLD = None
+YELLOW_THRESHOLD = None
+MAX_THRESHOLD = None
+DIST_BETWEEN_RX1_AND_NEEDLE_TIP = None
 
-KF_PROCESS_NOISE_COEF = 5
-KF_OBSERVATION_NOISE_COEF = 25
-
-# Checks for new targets once every 1000 ms / 1 second
-TARGET_UPDATE_FREQ_MS = 1000
-
-# Update Axis Bars once every 1000 ms / 1 second
-DISPLAY_UPDATE_FREQ_MS = 1000
-
-# Maximum difference in mm allowed for a particular color to show on a given axis
-GREEN_THRESHOLD = 2
-YELLOW_THRESHOLD = 10
-max_diff = 30 # Measurement differences are capped at this value in either direction
-
-DIST_BETWEEN_RX1_AND_NEEDLE_TIP = 10 # Distance in mm between the needle tip and the core nearest to the tip
+def init_params():
+    global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+    with open("params.json", "r") as p:
+        par = json.load(p)
+    ROLLING_INTERVAL = par["rolling_interval"]
+    KF_PROCESS_NOISE_COEF = par["kf_process_noise_coef_mm"]
+    KF_OBSERVATION_NOISE_COEF = par["kf_observation_noise_coef_mm"]
+    TARGET_UPDATE_FREQ_MS = par["target_update_freq_ms"]
+    DISPLAY_UPDATE_FREQ_MS = par["display_update_freq_ms"]
+    GREEN_THRESHOLD = par["green_threshold_mm"]
+    YELLOW_THRESHOLD = par["yellow_threshold_mm"]
+    MAX_THRESHOLD = par["max_threshold_mm"]
+    DIST_BETWEEN_RX1_AND_NEEDLE_TIP = par["dist_between_rx1_and_needle_tip_mm"]
 
 def get_color(desired, actual) -> QColor:
     abs_diff = abs(desired-actual)
@@ -79,7 +86,7 @@ def get_color(desired, actual) -> QColor:
 # Returns a float between -1.0 and 1.0, where 0 is in the center of the axis, -1 is on the bottom/left, and 1 is on the top/right
 def get_relative_position(desired, actual):
     abs_diff = abs(desired-actual)
-    rp_capped = math.log2(min(abs_diff, max_diff)+1) / math.log2(max_diff+1)
+    rp_capped = math.log2(min(abs_diff, MAX_THRESHOLD)+1) / math.log2(MAX_THRESHOLD+1)
     return rp_capped if desired > actual else -rp_capped
 
 class AxisBar(QFrame):
@@ -208,7 +215,7 @@ class AxisVisual(QWidget):
 class TrackingGUIWindow(QMainWindow):
     def __init__(self):
         super(TrackingGUIWindow, self).__init__()
-        
+        init_params()
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
 
