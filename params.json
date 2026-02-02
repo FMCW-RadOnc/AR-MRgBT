@@ -1,0 +1,11 @@
+{
+    "rolling_interval": 7,
+    "kf_process_noise_coef_mm" : 5,
+    "kf_observation_noise_coef_mm" : 25,
+    "target_update_freq_ms" : 1000,
+    "display_update_freq_ms" : 1000,
+    "green_threshold_mm" : 2,
+    "yellow_threshold_mm" : 10,
+    "max_threshold_mm" : 30,
+    "dist_between_rx1_and_needle_tip_mm" : 10
+}

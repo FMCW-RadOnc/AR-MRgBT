@@ -1,4 +1,4 @@
-*.json
+recording*/
 *.dcm
 *.pyc
 tracking_data*.txt
