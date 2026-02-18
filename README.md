@@ -1,5 +1,12 @@
 ## Normal Instructions
 
+To generate target points that the AR HUD will read, do the following:
+- Open MIM
+- Open the desired Series
+- Create Point Contours wherever you want a target point. Make sure to name them something you can recognize later.
+- Click on the Yellow Hat / Workflows button and search for the workflow "FH Proc Inline Create Needle End Points (1/2)".
+- Launch the workflow. This should create a csv file that the AR HUD will automatically read. The HUD will only recognize target points made on the same day it was run.
+
 To run the AR HUD, run the following commands in command line:
 - Navigate to the project directory via "cd C:\Brachy Code\AR-MRgBT"
 - Activate the Python virtual environment via "brachy\Scripts\activate"
