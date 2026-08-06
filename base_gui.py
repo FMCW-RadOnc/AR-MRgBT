@@ -39,9 +39,16 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox
 )
-from PyQt6.QtGui import QColorConstants, QColor,QPainter,QPen,QFont
+from PyQt6.QtGui import (
+    QColorConstants,
+    QColor,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QFont,
+)
 import math
-from PyQt6.QtCore import Qt, QTimer, QTime
+from PyQt6.QtCore import Qt, QTimer, QTime, QPointF, QRectF
 import csv
 import numpy as np
 import threading
@@ -98,31 +105,80 @@ def get_relative_position(desired, actual):
     rp_capped = math.log2(min(abs_diff, MAX_THRESHOLD)+1) / math.log2(MAX_THRESHOLD+1)
     return rp_capped if desired > actual else -rp_capped
 
+
+def draw_diagonal_hatch(
+    painter, left, top, right, bottom, color, line_width=2.5, spacing=7.0
+):
+    """Draw hatch strokes whose colored and transparent widths are similar."""
+    height = max(0.0, bottom - top)
+    painter.setPen(QPen(color, line_width))
+    start_x = left - height
+    while start_x <= right:
+        painter.drawLine(
+            QPointF(start_x, top), QPointF(start_x + height, bottom)
+        )
+        start_x += spacing
+
+
 class AxisBar(QFrame):
-    def __init__(self, is_vertical, *args, **kwargs):
+    def __init__(self, is_vertical, perspective=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.is_vertical = is_vertical
-        self.background_pen = QPen(QColorConstants.White,1.0)
+        self.perspective = perspective
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: 2px solid black; border-radius: 5px;")
-        self.no_desired_data_label = QLabel("No\nGoal\nPoint\nData" if is_vertical else "No Goal Point Data", parent=self)
-        self.no_desired_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
+        if perspective:
+            self.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0); border: none;"
+            )
+        else:
+            self.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0); "
+                "border: 2px solid black; border-radius: 5px;"
+            )
+
+        self.no_desired_data_label = QLabel(
+            "No\nGoal\nPoint\nData" if is_vertical else "No Goal Point Data",
+            parent=self,
+        )
+        self.no_desired_data_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter
+            if is_vertical
+            else Qt.AlignmentFlag.AlignVCenter
+        )
         self.no_desired_data_label.setFont(QFont('Arial', 20))
-        self.no_desired_data_label.setStyleSheet("background-color: white; border: none;")
+        self.no_desired_data_label.setStyleSheet(
+            "background-color: white; border: none;"
+        )
         self.no_desired_data_label.setWordWrap(True)
         self.no_desired_data_label.hide()
-        self.no_actual_data_label = QLabel("No\nCoil\nData" if is_vertical else "No Coil Data", parent=self)
-        self.no_actual_data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
+
+        self.no_actual_data_label = QLabel(
+            "No\nCoil\nData" if is_vertical else "No Coil Data", parent=self
+        )
+        self.no_actual_data_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter
+            if is_vertical
+            else Qt.AlignmentFlag.AlignVCenter
+        )
         self.no_actual_data_label.setFont(QFont('Arial', 20))
-        self.no_actual_data_label.setStyleSheet("background-color: white; border: none;")
+        self.no_actual_data_label.setStyleSheet(
+            "background-color: white; border: none;"
+        )
         self.no_actual_data_label.setWordWrap(True)
         self.no_actual_data_label.hide()
-        self.data_label = QLabel("",parent=self)
-        self.data_label.setAlignment(Qt.AlignmentFlag.AlignHCenter if is_vertical else Qt.AlignmentFlag.AlignVCenter)
-        self.data_label.setFont(QFont('Arial',15))
-        self.data_label.setStyleSheet("background-color: rgba(0, 0, 0, 0); border: none;")
+
+        self.data_label = QLabel("", parent=self)
+        self.data_label.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter
+            if is_vertical
+            else Qt.AlignmentFlag.AlignVCenter
+        )
+        self.data_label.setFont(QFont('Arial', 15))
+        self.data_label.setStyleSheet(
+            "background-color: rgba(0, 0, 0, 0); border: none;"
+        )
         self.data_label.hide()
 
         self.update_timer = QTimer(self)
@@ -130,22 +186,59 @@ class AxisBar(QFrame):
         self.update_timer.timeout.connect(self.update)
         self.update_timer.start()
 
-
     def set_actual(self, actual):
         self.actual = actual
-        #self.update()
 
     def set_desired(self, desired):
         self.desired = desired
-        #self.update()
-    
+
+    def perspective_path(self):
+        path = QPainterPath()
+        top_inset = self.width() * 0.36
+        top = self.height() * 0.30
+        bottom = self.height() * 0.70
+        path.moveTo(top_inset, top)
+        path.lineTo(self.width() - top_inset, top)
+        path.lineTo(self.width(), bottom)
+        path.lineTo(0, bottom)
+        path.closeSubpath()
+        return path
+
+    def draw_perspective_outline(self, painter):
+        top = self.height() * 0.30
+        middle = self.height() * 0.50
+        bottom = self.height() * 0.70
+        top_inset = self.width() * 0.36
+        middle_inset = top_inset / 2
+
+        upper_path = QPainterPath()
+        upper_path.moveTo(middle_inset, middle)
+        upper_path.lineTo(top_inset, top)
+        upper_path.lineTo(self.width() - top_inset, top)
+        upper_path.lineTo(self.width() - middle_inset, middle)
+
+        dashed_pen = QPen(QColorConstants.Black, 2.0)
+        dashed_pen.setStyle(Qt.PenStyle.DashLine)
+        dashed_pen.setDashPattern([3.0, 4.5])
+        painter.setPen(dashed_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(upper_path)
+
+        lower_path = QPainterPath()
+        lower_path.moveTo(middle_inset, middle)
+        lower_path.lineTo(0, bottom)
+        lower_path.lineTo(self.width(), bottom)
+        lower_path.lineTo(self.width() - middle_inset, middle)
+
+        painter.setPen(QPen(QColorConstants.Black, 2.0))
+        painter.drawPath(lower_path)
+
     def paintEvent(self, _):
         painter = QPainter(self)
-        #painter.setPen(self.background_pen)
-        #painter.setBrush(QColorConstants.White)
-        
-
-        #painter.drawRect(0,0,self.width(), self.height())
+        if self.perspective:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            perspective_path = self.perspective_path()
+            self.draw_perspective_outline(painter)
 
         if self.desired is None:
             self.no_actual_data_label.hide()
@@ -153,65 +246,104 @@ class AxisBar(QFrame):
             self.no_desired_data_label.adjustSize()
             self.data_label.hide()
             return
-        elif self.actual is None:
+        if self.actual is None:
             self.no_desired_data_label.hide()
             self.no_actual_data_label.show()
             self.no_actual_data_label.adjustSize()
             self.data_label.hide()
             return
-        
 
-        c = get_color(self.desired, self.actual)
-        painter.setPen(c)
-        painter.setBrush(c)
+        color = get_color(self.desired, self.actual)
+        painter.setPen(color)
+        too_far_in = self.perspective and self.actual > self.desired
+        painter.setBrush(Qt.BrushStyle.NoBrush if too_far_in else color)
+
+        if self.perspective:
+            painter.save()
+            painter.setClipPath(perspective_path)
 
         if self.is_vertical:
-            center_y = self.height() / 2
-            actual_pos_y = center_y + get_relative_position(self.desired, self.actual) * center_y
-            if center_y < actual_pos_y:
-                painter.drawRect(0,int(center_y),self.width(), int(actual_pos_y-center_y))
+            if self.perspective:
+                bar_top = self.height() * 0.30
+                bar_bottom = self.height() * 0.70
+                center = (bar_top + bar_bottom) / 2
+                half_length = (bar_bottom - bar_top) / 2
             else:
-                painter.drawRect(0,int(actual_pos_y),self.width(), int(center_y-actual_pos_y))
+                center = self.height() / 2
+                half_length = center
+            actual_position = (
+                center
+                + get_relative_position(self.desired, self.actual) * half_length
+            )
+            fill_top = min(center, actual_position)
+            fill_height = abs(actual_position - center)
+            if too_far_in:
+                painter.save()
+                painter.setClipRect(
+                    QRectF(0, fill_top, self.width(), fill_height),
+                    Qt.ClipOperation.IntersectClip,
+                )
+                draw_diagonal_hatch(
+                    painter,
+                    0,
+                    fill_top,
+                    self.width(),
+                    fill_top + fill_height,
+                    color,
+                )
+                painter.restore()
+            else:
+                painter.drawRect(
+                    0,
+                    int(fill_top),
+                    self.width(),
+                    int(fill_height),
+                )
             painter.setPen(self.middle_pen)
-            painter.drawLine(0, int(center_y), self.width(), int(center_y))
+            painter.drawLine(0, int(center), self.width(), int(center))
         else:
-            center_x = self.width() / 2
-            actual_pos_x = center_x + get_relative_position(self.desired, self.actual) * center_x
-            if center_x < actual_pos_x:
-                painter.drawRect(int(center_x),0,int(actual_pos_x-center_x), self.height())
-            else:
-                painter.drawRect(int(actual_pos_x),0,int(center_x-actual_pos_x), self.height())
+            center = self.width() / 2
+            actual_position = (
+                center + get_relative_position(self.desired, self.actual) * center
+            )
+            painter.drawRect(
+                int(min(center, actual_position)),
+                0,
+                int(abs(actual_position - center)),
+                self.height(),
+            )
             painter.setPen(self.middle_pen)
-            painter.drawLine(int(center_x), 0, int(center_x), self.height())
+            painter.drawLine(int(center), 0, int(center), self.height())
+
+        if self.perspective:
+            painter.restore()
+            self.draw_perspective_outline(painter)
+
         self.data_label.setText(str(round(self.actual - self.desired, 2)))
         self.data_label.adjustSize()
         self.data_label.show()
         self.no_actual_data_label.hide()
         self.no_desired_data_label.hide()
 
+
 class AxisVisual(QWidget):
-    def __init__(self, is_vertical, labels, *args, **kwargs):
+    def __init__(self, is_vertical, labels, perspective=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.is_vertical = is_vertical
-        if is_vertical:
-            layout = QVBoxLayout(self)
-        else:
-            layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self) if is_vertical else QHBoxLayout(self)
+
         self.axis_label1 = QLabel(labels[0], parent=self)
         self.axis_label1.setFont(QFont('Arial', 30))
         self.axis_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.axis_label1.show()
         layout.addWidget(self.axis_label1, 1)
 
-        self.bar = AxisBar(is_vertical=is_vertical, parent=self)
-
+        self.bar = AxisBar(
+            is_vertical=is_vertical, perspective=perspective, parent=self
+        )
         layout.addWidget(self.bar, 8)
 
         self.axis_label2 = QLabel(labels[1], parent=self)
         self.axis_label2.setFont(QFont('Arial', 30))
         self.axis_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            
-        self.axis_label2.show()
         layout.addWidget(self.axis_label2, 1)
 
     def set_actual(self, actual):
@@ -219,6 +351,107 @@ class AxisVisual(QWidget):
 
     def set_desired(self, desired):
         self.bar.set_desired(desired)
+
+class TargetingView(QWidget):
+    """Display lateral, vertical, and depth error as two hollow circles."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setStyleSheet("background-color: gray;")
+        self.desired = None
+        self.actual = None
+
+        self.status_label = QLabel(parent=self)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet(
+            "color: white; background: transparent; font: 24px Arial;"
+        )
+
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(DISPLAY_UPDATE_FREQ_MS)
+        self.update_timer.timeout.connect(self.update)
+        self.update_timer.start()
+
+    def set_desired(self, desired):
+        self.desired = desired
+        self.update()
+
+    def set_actual(self, actual):
+        self.actual = actual
+        self.update()
+
+    def resizeEvent(self, event):
+        self.status_label.setGeometry(self.rect())
+        super().resizeEvent(event)
+
+    def paintEvent(self, _):
+        if self.desired is None:
+            self.status_label.setText("No Goal Point Data")
+            self.status_label.show()
+            return
+        if self.actual is None:
+            self.status_label.setText("No Coil Data")
+            self.status_label.show()
+            return
+
+        self.status_label.hide()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        center_x = self.width() / 2
+        center_y = self.height() / 2
+        shortest_side = min(self.width(), self.height())
+        target_radius = max(4.0, shortest_side * 0.007)
+
+        horizontal_error = get_relative_position(
+            self.desired["sagittal"], self.actual["sagittal"]
+        )
+        vertical_error = get_relative_position(
+            self.desired["coronal"], self.actual["coronal"]
+        )
+        needle_x = center_x + horizontal_error * self.width() * 0.35
+        needle_y = center_y + vertical_error * self.height() * 0.35
+
+        depth_difference = abs(
+            self.actual["transversal"] - self.desired["transversal"]
+        )
+        depth_scale = (
+            math.log2(min(depth_difference, MAX_THRESHOLD) + 1)
+            / math.log2(MAX_THRESHOLD + 1)
+        )
+        needle_radius = target_radius * (1.0 + 4.0 * depth_scale)
+
+        largest_axis_error = max(
+            abs(self.actual["sagittal"] - self.desired["sagittal"]),
+            abs(self.actual["coronal"] - self.desired["coronal"]),
+            depth_difference,
+        )
+
+        target_pen = QPen(QColorConstants.White, 2.0)
+        painter.setPen(target_pen)
+        painter.drawEllipse(
+            QPointF(center_x, center_y), target_radius, target_radius
+        )
+
+        needle_color = get_color(0, largest_axis_error)
+        too_far_in = self.actual["transversal"] > self.desired["transversal"]
+        needle_pen = QPen(needle_color, 1.5)
+        painter.setPen(needle_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(
+            QPointF(needle_x, needle_y), needle_radius, needle_radius
+        )
+        if too_far_in:
+            x_extent = max(4.0, needle_radius * 0.7)
+            painter.drawLine(
+                QPointF(needle_x - x_extent, needle_y - x_extent),
+                QPointF(needle_x + x_extent, needle_y + x_extent),
+            )
+            painter.drawLine(
+                QPointF(needle_x - x_extent, needle_y + x_extent),
+                QPointF(needle_x + x_extent, needle_y - x_extent),
+            )
 
 
 class TrackingGUIWindow(QMainWindow):
@@ -236,8 +469,8 @@ class TrackingGUIWindow(QMainWindow):
         self.one_euro_filters : dict[str, OneEuroFilter] = {}
         self.previous_measurements : dict[str, dict[str, list[float]]] = {}
 
-        frame = QFrame(self)
-        self.setCentralWidget(frame)
+        self.target_view = TargetingView(parent=self)
+        self.setCentralWidget(self.target_view)
 
         self.filter_combobox = QComboBox(parent=self)
         self.filter_combobox.setStyleSheet("background-color: white;")
@@ -261,15 +494,24 @@ class TrackingGUIWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.updateTime)
         self.timer.start(1000)
-        
-        self.transversal_axis = AxisVisual(is_vertical=True,labels=["S", "I"],parent=self)
-        self.sagittal_axis = AxisVisual(is_vertical=False,labels=["R", "L"], parent=self)
-        self.coronal_axis = AxisVisual(is_vertical=True,labels=["A", "P"], parent=self)
 
         self.exit_label = QLabel("Hit the Escape Key to exit program.", parent=self)
         self.exit_label.setFont(QFont('Arial', 15))
         self.exit_label.setWordWrap(True)
         self.exit_label.setStyleSheet("background-color: lightblue;")
+
+        self.transversal_axis = AxisVisual(
+            is_vertical=True,
+            labels=["S", "I"],
+            perspective=True,
+            parent=self,
+        )
+        self.sagittal_axis = AxisVisual(
+            is_vertical=False, labels=["R", "L"], parent=self
+        )
+        self.coronal_axis = AxisVisual(
+            is_vertical=True, labels=["A", "P"], parent=self
+        )
 
         update_desired(self)
 
@@ -307,21 +549,23 @@ class TrackingGUIWindow(QMainWindow):
 
     def set_desired(self, desired_positions):
         self.desired_positions = desired_positions
-        for item in list(self.desired_positions.keys()):
+        for item in self.desired_positions:
             if item not in self.combobox_needle_set:
                 self.target_combobox.addItem(item)
                 self.combobox_needle_set.add(item)
         if self.current_needle is not None:
             self.target_combobox.setCurrentText(self.current_needle)
         self.current_needle = self.target_combobox.currentText()
-        if self.current_needle in self.desired_positions:
-            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
-            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
-            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
-        else:
+        desired = self.desired_positions.get(self.current_needle)
+        self.target_view.set_desired(desired)
+        if desired is None:
             self.transversal_axis.set_desired(None)
             self.sagittal_axis.set_desired(None)
             self.coronal_axis.set_desired(None)
+        else:
+            self.transversal_axis.set_desired(desired["transversal"])
+            self.sagittal_axis.set_desired(desired["sagittal"])
+            self.coronal_axis.set_desired(desired["coronal"])
 
     def update_coil(self,x,y,z,coil_name):
         if coil_name not in self.coil_positions:
@@ -392,27 +636,30 @@ class TrackingGUIWindow(QMainWindow):
                 "coronal" : coronal_needle_tip,
                 "sagittal" : sagittal_needle_tip
             }
+            self.target_view.set_actual(self.needle_tip_position)
             self.transversal_axis.set_actual(transversal_needle_tip)
             self.sagittal_axis.set_actual(sagittal_needle_tip)
             self.coronal_axis.set_actual(coronal_needle_tip)
 
     def updated_text(self, _):
         self.current_needle = self.target_combobox.currentText()
-        if self.current_needle in self.desired_positions:
-            self.transversal_axis.set_desired(self.desired_positions[self.current_needle]["transversal"])
-            self.sagittal_axis.set_desired(self.desired_positions[self.current_needle]["sagittal"])
-            self.coronal_axis.set_desired(self.desired_positions[self.current_needle]["coronal"])
-        else:
+        desired = self.desired_positions.get(self.current_needle)
+        self.target_view.set_desired(desired)
+        if desired is None:
             self.transversal_axis.set_desired(None)
             self.sagittal_axis.set_desired(None)
             self.coronal_axis.set_desired(None)
+        else:
+            self.transversal_axis.set_desired(desired["transversal"])
+            self.sagittal_axis.set_desired(desired["sagittal"])
+            self.coronal_axis.set_desired(desired["coronal"])
 
     def updated_filter(self, _):
         self.filter_mode = self.filter_combobox.currentText()
         if self.filter_mode == "No Filter":
             pass
         elif self.filter_mode == "Rolling Average" or self.filter_mode == "Rolling Median":
-            self.previous_measurements : dict[str, dict[str, list[float]]] = {}
+            self.previous_measurements = {}
             self.previous_measurements["RX1"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
             self.previous_measurements["RX2"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
         elif self.filter_mode == "One Euro Filter":
@@ -426,7 +673,7 @@ class TrackingGUIWindow(QMainWindow):
                 for coil_name in ("RX1", "RX2")
             }
         elif self.filter_mode == "Kalman Filter":
-            self.filters : dict[str, KalmanFilter] = {}
+            self.filters = {}
             self.filters["RX1"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
             self.filters["RX2"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
 
@@ -443,23 +690,32 @@ class TrackingGUIWindow(QMainWindow):
             margin = 10
             width_no_margin = width - 2*margin
             height_no_margin = height - 2*margin
-
-            # Proportion for top row height
             corner_height = int(0.1 * height_no_margin)
             corner_width = int(0.15 * width_no_margin)
-            
-            """
-            Clock should be in top left, exit label should be top right,
-            current target should be in bottom left (and smaller), current filter should be in bottom right
-            """
+
             self.digital_clock.setGeometry(margin, margin, corner_width, corner_height)
             self.exit_label.setGeometry(width_no_margin + margin - corner_width, margin, corner_width, corner_height)
             self.target_combobox.setGeometry(margin, height_no_margin + margin - corner_height, corner_width, corner_height)
             self.filter_combobox.setGeometry(width_no_margin + margin - corner_width, height_no_margin + margin - corner_height, corner_width, corner_height)
-            
-            self.transversal_axis.setGeometry(margin, margin + corner_height, int(corner_width / 2), height_no_margin - corner_height*2)
-            self.coronal_axis.setGeometry(width_no_margin + margin - int(corner_width / 2), margin + corner_height, int(corner_width / 2), height_no_margin - corner_height*2)
-            self.sagittal_axis.setGeometry(margin + corner_width, height_no_margin + margin - corner_height, width_no_margin - corner_width*2, corner_height)
+
+            self.transversal_axis.setGeometry(
+                margin,
+                margin + corner_height,
+                int(corner_width * 0.70),
+                height_no_margin - corner_height * 2,
+            )
+            self.coronal_axis.setGeometry(
+                width_no_margin + margin - int(corner_width / 2),
+                margin + corner_height,
+                int(corner_width / 2),
+                height_no_margin - corner_height * 2,
+            )
+            self.sagittal_axis.setGeometry(
+                margin + corner_width,
+                height_no_margin + margin - corner_height,
+                width_no_margin - corner_width * 2,
+                corner_height,
+            )
             self.setGeometry(geometry)
         else:
             print("No screen information available.")
