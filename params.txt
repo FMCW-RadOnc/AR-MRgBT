@@ -4,6 +4,14 @@
     * For the "Kalman Filter" filter, what process noise (in mm) to assume
 - kf_observation_noise_coef_mm
     * For the "Kalman Filter" filter, what observation noise (in mm) to assume
+- one_euro_min_cutoff_hz
+    * For the "One Euro Filter", the base cutoff frequency. Lower values suppress more stationary jitter but add more lag to slow movement
+- one_euro_beta
+    * For the "One Euro Filter", how strongly the cutoff rises with movement speed. Higher values follow deliberate movement faster but allow more noise through
+- one_euro_derivative_cutoff_hz
+    * For the "One Euro Filter", the cutoff frequency used to smooth the speed estimate
+- one_euro_max_speed_mm_s
+    * For the "One Euro Filter", the maximum physically plausible coil speed. Faster one-sample jumps are treated as tracking outliers
 - target_update_freq_ms
     * How often to update the list of possible targets (in ms) 
 - display_update_freq_ms

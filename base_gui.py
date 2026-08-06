@@ -46,6 +46,7 @@ import csv
 import numpy as np
 import threading
 from kalman_filter import KalmanFilter
+from one_euro_filter import OneEuroFilter
 from datetime import datetime
 import statistics
 import json
@@ -53,6 +54,10 @@ import json
 ROLLING_INTERVAL = None
 KF_PROCESS_NOISE_COEF = None
 KF_OBSERVATION_NOISE_COEF = None
+ONE_EURO_MIN_CUTOFF_HZ = None
+ONE_EURO_BETA = None
+ONE_EURO_DERIVATIVE_CUTOFF_HZ = None
+ONE_EURO_MAX_SPEED_MM_S = None
 TARGET_UPDATE_FREQ_MS = None
 DISPLAY_UPDATE_FREQ_MS = None
 GREEN_THRESHOLD = None
@@ -61,12 +66,16 @@ MAX_THRESHOLD = None
 DIST_BETWEEN_RX1_AND_NEEDLE_TIP = None
 
 def init_params():
-    global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+    global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, ONE_EURO_MIN_CUTOFF_HZ, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF_HZ, ONE_EURO_MAX_SPEED_MM_S, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
     with open("params.json", "r") as p:
         par = json.load(p)
     ROLLING_INTERVAL = par["rolling_interval"]
     KF_PROCESS_NOISE_COEF = par["kf_process_noise_coef_mm"]
     KF_OBSERVATION_NOISE_COEF = par["kf_observation_noise_coef_mm"]
+    ONE_EURO_MIN_CUTOFF_HZ = par["one_euro_min_cutoff_hz"]
+    ONE_EURO_BETA = par["one_euro_beta"]
+    ONE_EURO_DERIVATIVE_CUTOFF_HZ = par["one_euro_derivative_cutoff_hz"]
+    ONE_EURO_MAX_SPEED_MM_S = par["one_euro_max_speed_mm_s"]
     TARGET_UPDATE_FREQ_MS = par["target_update_freq_ms"]
     DISPLAY_UPDATE_FREQ_MS = par["display_update_freq_ms"]
     GREEN_THRESHOLD = par["green_threshold_mm"]
@@ -224,6 +233,7 @@ class TrackingGUIWindow(QMainWindow):
         self.needle_tip_position = None
 
         self.filters : dict[str, KalmanFilter] = {}
+        self.one_euro_filters : dict[str, OneEuroFilter] = {}
         self.previous_measurements : dict[str, dict[str, list[float]]] = {}
 
         frame = QFrame(self)
@@ -233,7 +243,7 @@ class TrackingGUIWindow(QMainWindow):
         self.filter_combobox.setStyleSheet("background-color: white;")
         self.filter_combobox.setFont(QFont('Arial', 20))
         self.filter_combobox.activated.connect(self.updated_filter)
-        self.filter_combobox.addItems(["No Filter", "Rolling Average", "Rolling Median", "Kalman Filter"])
+        self.filter_combobox.addItems(["No Filter", "Rolling Average", "Rolling Median", "One Euro Filter", "Kalman Filter"])
         self.filter_mode = "No Filter"
 
         self.target_combobox = QComboBox(parent=self)
@@ -314,7 +324,7 @@ class TrackingGUIWindow(QMainWindow):
             self.coronal_axis.set_desired(None)
 
     def update_coil(self,x,y,z,coil_name):
-        if (not coil_name != "RX1") and (not coil_name != "RX2"):
+        if coil_name not in self.coil_positions:
             return
         
         # Convert from x,y,z to DCM TODO
@@ -356,7 +366,9 @@ class TrackingGUIWindow(QMainWindow):
                 "coronal" : statistics.median(self.previous_measurements[coil_name]["coronal"]),
                 "sagittal" : statistics.median(self.previous_measurements[coil_name]["sagittal"])
             }
-        else:
+        elif self.filter_mode == "One Euro Filter":
+            self.coil_positions[coil_name] = self.one_euro_filters[coil_name].update(measurement)
+        elif self.filter_mode == "Kalman Filter":
             self.filters[coil_name].update(measurement)
             self.coil_positions[coil_name] = self.filters[coil_name].get()
 
@@ -403,8 +415,17 @@ class TrackingGUIWindow(QMainWindow):
             self.previous_measurements : dict[str, dict[str, list[float]]] = {}
             self.previous_measurements["RX1"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
             self.previous_measurements["RX2"] = {"transversal" : [], "sagittal" : [], "coronal" : []}
-        else:
-            # Kalman Filter
+        elif self.filter_mode == "One Euro Filter":
+            self.one_euro_filters = {
+                coil_name: OneEuroFilter(
+                    ONE_EURO_MIN_CUTOFF_HZ,
+                    ONE_EURO_BETA,
+                    ONE_EURO_DERIVATIVE_CUTOFF_HZ,
+                    ONE_EURO_MAX_SPEED_MM_S,
+                )
+                for coil_name in ("RX1", "RX2")
+            }
+        elif self.filter_mode == "Kalman Filter":
             self.filters : dict[str, KalmanFilter] = {}
             self.filters["RX1"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
             self.filters["RX2"] = KalmanFilter(KF_PROCESS_NOISE_COEF,KF_OBSERVATION_NOISE_COEF)
