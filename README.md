@@ -14,6 +14,8 @@ To run the AR HUD, run the following commands in command line:
    - Read "params.txt" for an explanation on what each parameter does   
 - Run the HUD via "python tracking_gui.py"
 
+The HUD starts in its normal gray interface. Click **Headset Mode** to switch to a black, reduced-glare display that hides the controls and leaves only the tracking visuals. Press Escape once to return to the normal interface. From the normal interface, Escape retains its original exit-confirmation behavior.
+
 ## Other Utilities
 
 Besides the normal HUD, there are several other programs that could be useful when developing or troubleshooting.

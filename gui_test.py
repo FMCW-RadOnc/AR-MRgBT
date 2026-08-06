@@ -102,6 +102,7 @@ if __name__ == "__main__":
         int((window.width() - label_width) / 2), 10, label_width, 45
     )
     case_label.show()
+    window.register_normal_mode_only_widget(case_label)
     comm = Communicate()
     comm.data_signal.connect(window.update_coil)
     data_timer = QTimer()

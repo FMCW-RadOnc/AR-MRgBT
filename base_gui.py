@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
+    QPushButton,
     QMessageBox
 )
 from PyQt6.QtGui import (
@@ -125,6 +126,7 @@ class AxisBar(QFrame):
         super().__init__(*args, **kwargs)
         self.is_vertical = is_vertical
         self.perspective = perspective
+        self.headset_mode = False
         self.middle_pen = QPen(QColorConstants.DarkMagenta, 8.0)
         self.actual = None
         self.desired = None
@@ -192,6 +194,45 @@ class AxisBar(QFrame):
     def set_desired(self, desired):
         self.desired = desired
 
+    def set_headset_mode(self, enabled):
+        self.headset_mode = enabled
+        outline_color = "white" if enabled else "black"
+        if self.perspective:
+            self.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0); border: none;"
+            )
+        else:
+            self.setStyleSheet(
+                "background-color: rgba(0, 0, 0, 0); "
+                f"border: 2px solid {outline_color}; border-radius: 5px;"
+            )
+
+        if enabled:
+            missing_data_style = (
+                "color: white; background-color: transparent; border: none;"
+            )
+            data_style = (
+                "color: white; background-color: transparent; border: none;"
+            )
+        else:
+            missing_data_style = (
+                "color: black; background-color: white; border: none;"
+            )
+            data_style = (
+                "color: black; background-color: transparent; border: none;"
+            )
+        self.no_desired_data_label.setStyleSheet(missing_data_style)
+        self.no_actual_data_label.setStyleSheet(missing_data_style)
+        self.data_label.setStyleSheet(data_style)
+        self.update()
+
+    def outline_color(self):
+        return (
+            QColorConstants.White
+            if self.headset_mode
+            else QColorConstants.Black
+        )
+
     def perspective_path(self):
         path = QPainterPath()
         top_inset = self.width() * 0.36
@@ -217,7 +258,7 @@ class AxisBar(QFrame):
         upper_path.lineTo(self.width() - top_inset, top)
         upper_path.lineTo(self.width() - middle_inset, middle)
 
-        dashed_pen = QPen(QColorConstants.Black, 2.0)
+        dashed_pen = QPen(self.outline_color(), 2.0)
         dashed_pen.setStyle(Qt.PenStyle.DashLine)
         dashed_pen.setDashPattern([3.0, 4.5])
         painter.setPen(dashed_pen)
@@ -230,7 +271,7 @@ class AxisBar(QFrame):
         lower_path.lineTo(self.width(), bottom)
         lower_path.lineTo(self.width() - middle_inset, middle)
 
-        painter.setPen(QPen(QColorConstants.Black, 2.0))
+        painter.setPen(QPen(self.outline_color(), 2.0))
         painter.drawPath(lower_path)
 
     def paintEvent(self, _):
@@ -254,6 +295,9 @@ class AxisBar(QFrame):
             return
 
         color = get_color(self.desired, self.actual)
+        if self.headset_mode:
+            color = QColor(color)
+            color.setAlpha(150)
         painter.setPen(color)
         too_far_in = self.perspective and self.actual > self.desired
         painter.setBrush(Qt.BrushStyle.NoBrush if too_far_in else color)
@@ -321,6 +365,11 @@ class AxisBar(QFrame):
 
         self.data_label.setText(str(round(self.actual - self.desired, 2)))
         self.data_label.adjustSize()
+        if self.perspective:
+            trapezoid_bottom = self.height() * 0.70
+            self.data_label.move(
+                4, int(trapezoid_bottom - self.data_label.height() - 4)
+            )
         self.data_label.show()
         self.no_actual_data_label.hide()
         self.no_desired_data_label.hide()
@@ -329,28 +378,76 @@ class AxisBar(QFrame):
 class AxisVisual(QWidget):
     def __init__(self, is_vertical, labels, perspective=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        layout = QVBoxLayout(self) if is_vertical else QHBoxLayout(self)
+        self.perspective = perspective
+        layout = None
+        if not perspective:
+            layout = QVBoxLayout(self) if is_vertical else QHBoxLayout(self)
 
         self.axis_label1 = QLabel(labels[0], parent=self)
         self.axis_label1.setFont(QFont('Arial', 30))
         self.axis_label1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.axis_label1, 1)
+        if layout is not None:
+            layout.addWidget(self.axis_label1, 1)
 
         self.bar = AxisBar(
             is_vertical=is_vertical, perspective=perspective, parent=self
         )
-        layout.addWidget(self.bar, 8)
+        if layout is not None:
+            layout.addWidget(self.bar, 8)
 
         self.axis_label2 = QLabel(labels[1], parent=self)
         self.axis_label2.setFont(QFont('Arial', 30))
         self.axis_label2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.axis_label2, 1)
+        if layout is not None:
+            layout.addWidget(self.axis_label2, 1)
+
+    def resizeEvent(self, event):
+        if self.perspective:
+            side_margin = 9
+            bar_top = int(self.height() * 0.10)
+            bar_height = int(self.height() * 0.80)
+            self.bar.setGeometry(
+                side_margin,
+                bar_top,
+                max(1, self.width() - side_margin * 2),
+                bar_height,
+            )
+
+            label_height = 42
+            label_gap = 14
+            trapezoid_top = bar_top + int(bar_height * 0.30)
+            trapezoid_bottom = bar_top + int(bar_height * 0.70)
+            self.axis_label1.setGeometry(
+                0,
+                trapezoid_top - label_height - label_gap,
+                self.width(),
+                label_height,
+            )
+            self.axis_label2.setGeometry(
+                0,
+                trapezoid_bottom + label_gap,
+                self.width(),
+                label_height,
+            )
+            self.axis_label1.raise_()
+            self.axis_label2.raise_()
+        super().resizeEvent(event)
 
     def set_actual(self, actual):
         self.bar.set_actual(actual)
 
     def set_desired(self, desired):
         self.bar.set_desired(desired)
+
+    def set_headset_mode(self, enabled):
+        label_style = (
+            "color: white; background-color: transparent;"
+            if enabled
+            else "color: black; background-color: transparent;"
+        )
+        self.axis_label1.setStyleSheet(label_style)
+        self.axis_label2.setStyleSheet(label_style)
+        self.bar.set_headset_mode(enabled)
 
 class TargetingView(QWidget):
     """Display lateral, vertical, and depth error as two hollow circles."""
@@ -378,6 +475,11 @@ class TargetingView(QWidget):
 
     def set_actual(self, actual):
         self.actual = actual
+        self.update()
+
+    def set_headset_mode(self, enabled):
+        background = "black" if enabled else "gray"
+        self.setStyleSheet(f"background-color: {background};")
         self.update()
 
     def resizeEvent(self, event):
@@ -460,6 +562,8 @@ class TrackingGUIWindow(QMainWindow):
         init_params()
         self.setStyleSheet("background-color: gray;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.headset_mode = False
+        self.normal_mode_only_widgets = []
 
         self.desired_positions = {}
         self.coil_positions = {"RX1" : None, "RX2" : None}
@@ -500,6 +604,13 @@ class TrackingGUIWindow(QMainWindow):
         self.exit_label.setWordWrap(True)
         self.exit_label.setStyleSheet("background-color: lightblue;")
 
+        self.headset_mode_button = QPushButton("Headset Mode", parent=self)
+        self.headset_mode_button.setFont(QFont('Arial', 18))
+        self.headset_mode_button.setStyleSheet(
+            "background-color: white; color: black;"
+        )
+        self.headset_mode_button.clicked.connect(self.enter_headset_mode)
+
         self.transversal_axis = AxisVisual(
             is_vertical=True,
             labels=["S", "I"],
@@ -528,6 +639,9 @@ class TrackingGUIWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
+            if self.headset_mode:
+                self.set_headset_mode(False)
+                return
             message_box = QMessageBox(self)
             message_box.setWindowTitle("Exit Confirmation")
             message_box.setText("Click \"Ok\" to exit.")
@@ -538,6 +652,32 @@ class TrackingGUIWindow(QMainWindow):
             message_box_button = message_box.exec()
             if message_box_button == QMessageBox.StandardButton.Ok:
                 QApplication.quit()
+
+    def enter_headset_mode(self):
+        self.set_headset_mode(True)
+
+    def register_normal_mode_only_widget(self, widget):
+        self.normal_mode_only_widgets.append(widget)
+        widget.setVisible(not self.headset_mode)
+
+    def set_headset_mode(self, enabled):
+        self.headset_mode = enabled
+        background = "black" if enabled else "gray"
+        self.setStyleSheet(f"background-color: {background};")
+        self.target_view.set_headset_mode(enabled)
+        self.transversal_axis.set_headset_mode(enabled)
+        self.sagittal_axis.set_headset_mode(enabled)
+        self.coronal_axis.set_headset_mode(enabled)
+
+        controls = [
+            self.digital_clock,
+            self.exit_label,
+            self.target_combobox,
+            self.filter_combobox,
+            self.headset_mode_button,
+        ] + self.normal_mode_only_widgets
+        for control in controls:
+            control.setVisible(not enabled)
 
     def update_s(self):
 
@@ -697,6 +837,15 @@ class TrackingGUIWindow(QMainWindow):
             self.exit_label.setGeometry(width_no_margin + margin - corner_width, margin, corner_width, corner_height)
             self.target_combobox.setGeometry(margin, height_no_margin + margin - corner_height, corner_width, corner_height)
             self.filter_combobox.setGeometry(width_no_margin + margin - corner_width, height_no_margin + margin - corner_height, corner_width, corner_height)
+
+            mode_button_width = int(width_no_margin * 0.20)
+            mode_button_height = int(corner_height * 0.65)
+            self.headset_mode_button.setGeometry(
+                margin + int((width_no_margin - mode_button_width) / 2),
+                margin,
+                mode_button_width,
+                mode_button_height,
+            )
 
             self.transversal_axis.setGeometry(
                 margin,
