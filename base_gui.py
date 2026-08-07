@@ -538,22 +538,15 @@ class TargetingView(QWidget):
 
         needle_color = get_color(0, largest_axis_error)
         too_far_in = self.actual["transversal"] > self.desired["transversal"]
-        needle_pen = QPen(needle_color, 1.5)
+        needle_pen = QPen(needle_color, 2.0 if too_far_in else 1.5)
+        if too_far_in:
+            needle_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            needle_pen.setDashPattern([0.1, 2.5])
         painter.setPen(needle_pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(
             QPointF(needle_x, needle_y), needle_radius, needle_radius
         )
-        if too_far_in:
-            x_extent = max(4.0, needle_radius * 0.7)
-            painter.drawLine(
-                QPointF(needle_x - x_extent, needle_y - x_extent),
-                QPointF(needle_x + x_extent, needle_y + x_extent),
-            )
-            painter.drawLine(
-                QPointF(needle_x - x_extent, needle_y + x_extent),
-                QPointF(needle_x + x_extent, needle_y - x_extent),
-            )
 
 
 class TrackingGUIWindow(QMainWindow):
