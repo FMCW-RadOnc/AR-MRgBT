@@ -14,13 +14,15 @@ To run the AR HUD, run the following commands in command line:
    - Read "params.txt" for an explanation on what each parameter does   
 - Run the HUD via "python tracking_gui.py"
 
+The HUD starts in its normal gray interface. Click **Headset Mode** to switch to a black, reduced-glare display that hides the controls and leaves only the tracking visuals. Press Escape once to return to the normal interface. From the normal interface, Escape retains its original exit-confirmation behavior.
+
 ## Other Utilities
 
 Besides the normal HUD, there are several other programs that could be useful when developing or troubleshooting.
 
-### Run the HUD using random sensor data
+### Preview the targeting HUD with simulated sensor data
 
-To run a version of the HUD where instead of using real sensor data, fake sensor data is used instead, run "python gui_test.py" instead.
+Run `python gui_test.py` to preview the targeting circles without Access-i or MIM data. The simulator slowly cycles through all 27 combinations of horizontal, vertical, and insertion-depth states, labeling and holding each case so it can be inspected.
 
 ### Record data from the sensors to use it later
 
