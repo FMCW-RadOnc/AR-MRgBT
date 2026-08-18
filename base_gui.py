@@ -37,7 +37,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
-    QPushButton,
     QMessageBox
 )
 from PyQt6.QtGui import (
@@ -55,6 +54,7 @@ import numpy as np
 import threading
 from kalman_filter import KalmanFilter
 from one_euro_filter import OneEuroFilter
+from display_median import DisplayMedianBuffer
 from datetime import datetime
 import statistics
 import json
@@ -72,6 +72,7 @@ GREEN_THRESHOLD = None
 YELLOW_THRESHOLD = None
 MAX_THRESHOLD = None
 DIST_BETWEEN_RX1_AND_NEEDLE_TIP = None
+XY_TRAVEL_FRACTION = 0.37
 
 def init_params():
     global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, ONE_EURO_MIN_CUTOFF_HZ, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF_HZ, ONE_EURO_MAX_SPEED_MM_S, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
@@ -504,7 +505,13 @@ class TargetingView(QWidget):
         center_x = self.width() / 2
         center_y = self.height() / 2
         shortest_side = min(self.width(), self.height())
-        target_radius = max(4.0, shortest_side * 0.007)
+        needle_base_radius = max(4.0, shortest_side * 0.007)
+        target_radius = max(5.0, shortest_side * 0.009)
+        tolerance_scale = (
+            math.log2(GREEN_THRESHOLD + 1) / math.log2(MAX_THRESHOLD + 1)
+        )
+        xy_travel = shortest_side * XY_TRAVEL_FRACTION
+        tolerance_radius = xy_travel * tolerance_scale
 
         horizontal_error = get_relative_position(
             self.desired["sagittal"], self.actual["sagittal"]
@@ -512,8 +519,6 @@ class TargetingView(QWidget):
         vertical_error = get_relative_position(
             self.desired["coronal"], self.actual["coronal"]
         )
-        needle_x = center_x + horizontal_error * self.width() * 0.35
-        needle_y = center_y + vertical_error * self.height() * 0.35
 
         depth_difference = abs(
             self.actual["transversal"] - self.desired["transversal"]
@@ -522,23 +527,34 @@ class TargetingView(QWidget):
             math.log2(min(depth_difference, MAX_THRESHOLD) + 1)
             / math.log2(MAX_THRESHOLD + 1)
         )
-        needle_radius = target_radius * (1.0 + 4.0 * depth_scale)
+        needle_radius = needle_base_radius * (1.0 + 7.0 * depth_scale)
 
-        largest_axis_error = max(
-            abs(self.actual["sagittal"] - self.desired["sagittal"]),
-            abs(self.actual["coronal"] - self.desired["coronal"]),
-            depth_difference,
+        # A millimeter of lateral error must occupy the same display distance
+        # as a millimeter of vertical error in the projected headset view.
+        needle_x = center_x + horizontal_error * xy_travel
+        needle_y = center_y + vertical_error * xy_travel
+
+        three_dimensional_error = math.sqrt(
+            (self.actual["sagittal"] - self.desired["sagittal"]) ** 2
+            + (self.actual["coronal"] - self.desired["coronal"]) ** 2
+            + (self.actual["transversal"] - self.desired["transversal"]) ** 2
         )
 
-        target_pen = QPen(QColorConstants.White, 2.0)
+        tolerance_pen = QPen(QColorConstants.Green, 2.0)
+        painter.setPen(tolerance_pen)
+        painter.drawEllipse(
+            QPointF(center_x, center_y), tolerance_radius, tolerance_radius
+        )
+
+        target_pen = QPen(QColorConstants.White, 5.0)
         painter.setPen(target_pen)
         painter.drawEllipse(
             QPointF(center_x, center_y), target_radius, target_radius
         )
 
-        needle_color = get_color(0, largest_axis_error)
+        needle_color = get_color(0, three_dimensional_error)
         too_far_in = self.actual["transversal"] > self.desired["transversal"]
-        needle_pen = QPen(needle_color, 2.0 if too_far_in else 1.5)
+        needle_pen = QPen(needle_color, 5.0 if too_far_in else 4.0)
         if too_far_in:
             needle_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             needle_pen.setDashPattern([0.1, 2.5])
@@ -553,14 +569,13 @@ class TrackingGUIWindow(QMainWindow):
     def __init__(self):
         super(TrackingGUIWindow, self).__init__()
         init_params()
-        self.setStyleSheet("background-color: gray;")
+        self.setStyleSheet("background-color: black;")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
-        self.headset_mode = False
-        self.normal_mode_only_widgets = []
 
         self.desired_positions = {}
         self.coil_positions = {"RX1" : None, "RX2" : None}
         self.needle_tip_position = None
+        self.display_positions = DisplayMedianBuffer()
 
         self.filters : dict[str, KalmanFilter] = {}
         self.one_euro_filters : dict[str, OneEuroFilter] = {}
@@ -574,7 +589,17 @@ class TrackingGUIWindow(QMainWindow):
         self.filter_combobox.setFont(QFont('Arial', 20))
         self.filter_combobox.activated.connect(self.updated_filter)
         self.filter_combobox.addItems(["No Filter", "Rolling Average", "Rolling Median", "One Euro Filter", "Kalman Filter"])
-        self.filter_mode = "No Filter"
+        self.filter_mode = "One Euro Filter"
+        self.filter_combobox.setCurrentText(self.filter_mode)
+        self.one_euro_filters = {
+            coil_name: OneEuroFilter(
+                ONE_EURO_MIN_CUTOFF_HZ,
+                ONE_EURO_BETA,
+                ONE_EURO_DERIVATIVE_CUTOFF_HZ,
+                ONE_EURO_MAX_SPEED_MM_S,
+            )
+            for coil_name in ("RX1", "RX2")
+        }
 
         self.target_combobox = QComboBox(parent=self)
         self.target_combobox.setStyleSheet("background-color: white;")
@@ -597,13 +622,6 @@ class TrackingGUIWindow(QMainWindow):
         self.exit_label.setWordWrap(True)
         self.exit_label.setStyleSheet("background-color: lightblue;")
 
-        self.headset_mode_button = QPushButton("Headset Mode", parent=self)
-        self.headset_mode_button.setFont(QFont('Arial', 18))
-        self.headset_mode_button.setStyleSheet(
-            "background-color: white; color: black;"
-        )
-        self.headset_mode_button.clicked.connect(self.enter_headset_mode)
-
         self.transversal_axis = AxisVisual(
             is_vertical=True,
             labels=["S", "I"],
@@ -616,6 +634,21 @@ class TrackingGUIWindow(QMainWindow):
         self.coronal_axis = AxisVisual(
             is_vertical=True, labels=["A", "P"], parent=self
         )
+
+        # Incoming scans continue to be filtered at their native rate. Only
+        # the displayed needle position is reduced to one median every window.
+        self.display_timer = QTimer(self)
+        self.display_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.display_timer.setInterval(DISPLAY_UPDATE_FREQ_MS)
+        self.display_timer.timeout.connect(self.update_display_position)
+        self.display_timer.start()
+
+        # The headset presentation is now the application's only view. Keep
+        # its low-glare styling active while leaving the corner controls shown.
+        self.target_view.set_headset_mode(True)
+        self.transversal_axis.set_headset_mode(True)
+        self.sagittal_axis.set_headset_mode(True)
+        self.coronal_axis.set_headset_mode(True)
 
         update_desired(self)
 
@@ -632,9 +665,6 @@ class TrackingGUIWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            if self.headset_mode:
-                self.set_headset_mode(False)
-                return
             message_box = QMessageBox(self)
             message_box.setWindowTitle("Exit Confirmation")
             message_box.setText("Click \"Ok\" to exit.")
@@ -645,32 +675,6 @@ class TrackingGUIWindow(QMainWindow):
             message_box_button = message_box.exec()
             if message_box_button == QMessageBox.StandardButton.Ok:
                 QApplication.quit()
-
-    def enter_headset_mode(self):
-        self.set_headset_mode(True)
-
-    def register_normal_mode_only_widget(self, widget):
-        self.normal_mode_only_widgets.append(widget)
-        widget.setVisible(not self.headset_mode)
-
-    def set_headset_mode(self, enabled):
-        self.headset_mode = enabled
-        background = "black" if enabled else "gray"
-        self.setStyleSheet(f"background-color: {background};")
-        self.target_view.set_headset_mode(enabled)
-        self.transversal_axis.set_headset_mode(enabled)
-        self.sagittal_axis.set_headset_mode(enabled)
-        self.coronal_axis.set_headset_mode(enabled)
-
-        controls = [
-            self.digital_clock,
-            self.exit_label,
-            self.target_combobox,
-            self.filter_combobox,
-            self.headset_mode_button,
-        ] + self.normal_mode_only_widgets
-        for control in controls:
-            control.setVisible(not enabled)
 
     def update_s(self):
 
@@ -701,6 +705,7 @@ class TrackingGUIWindow(QMainWindow):
             self.coronal_axis.set_desired(desired["coronal"])
 
     def update_coil(self,x,y,z,coil_name):
+        """Update one coil without publishing a partial tracking frame."""
         if coil_name not in self.coil_positions:
             return
         
@@ -749,30 +754,68 @@ class TrackingGUIWindow(QMainWindow):
             self.filters[coil_name].update(measurement)
             self.coil_positions[coil_name] = self.filters[coil_name].get()
 
-        
+    def update_tracking_frame(self, coil_measurements):
+        """Process both coils from one scanner message as a coherent frame."""
+        required_coils = {"RX1", "RX2"}
+        if not required_coils.issubset(coil_measurements):
+            return
 
-        """
-        If we have values for both RX1 and RX2, estimate the needle tip position.
-        """
-        if self.coil_positions["RX1"] is not None and self.coil_positions["RX2"] is not None:
-            transversal_diff = self.coil_positions["RX1"]["transversal"] - self.coil_positions["RX2"]["transversal"]
-            coronal_diff = self.coil_positions["RX1"]["coronal"] - self.coil_positions["RX2"]["coronal"]
-            sagittal_diff = self.coil_positions["RX1"]["sagittal"] - self.coil_positions["RX2"]["sagittal"]
-            diff = np.array([transversal_diff, coronal_diff, sagittal_diff], dtype=float)
-            unit_diff = diff / np.linalg.norm(diff)
-            transversal_unit_diff, coronal_unit_diff, sagittal_unit_diff = unit_diff.tolist()
-            transversal_needle_tip = self.coil_positions["RX1"]["transversal"] + transversal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            coronal_needle_tip = self.coil_positions["RX1"]["coronal"] + coronal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            sagittal_needle_tip = self.coil_positions["RX1"]["sagittal"] + sagittal_unit_diff*DIST_BETWEEN_RX1_AND_NEEDLE_TIP
-            self.needle_tip_position = {
-                "transversal" : transversal_needle_tip,
-                "coronal" : coronal_needle_tip,
-                "sagittal" : sagittal_needle_tip
-            }
-            self.target_view.set_actual(self.needle_tip_position)
-            self.transversal_axis.set_actual(transversal_needle_tip)
-            self.sagittal_axis.set_actual(sagittal_needle_tip)
-            self.coronal_axis.set_actual(coronal_needle_tip)
+        for coil_name in ("RX1", "RX2"):
+            x, y, z = coil_measurements[coil_name]
+            self.update_coil(x, y, z, coil_name)
+
+        needle_tip = self.calculate_needle_tip()
+        if needle_tip is not None:
+            self.display_positions.add(needle_tip)
+
+    def calculate_needle_tip(self):
+        """Estimate the tip from the latest coherent pair of coil positions."""
+        rx1 = self.coil_positions["RX1"]
+        rx2 = self.coil_positions["RX2"]
+        if rx1 is None or rx2 is None:
+            return None
+
+        diff = np.array(
+            [
+                rx1["transversal"] - rx2["transversal"],
+                rx1["coronal"] - rx2["coronal"],
+                rx1["sagittal"] - rx2["sagittal"],
+            ],
+            dtype=float,
+        )
+        distance = np.linalg.norm(diff)
+        if not np.isfinite(distance) or distance == 0:
+            return None
+
+        transversal_unit_diff, coronal_unit_diff, sagittal_unit_diff = (
+            diff / distance
+        ).tolist()
+        return {
+            "transversal": rx1["transversal"]
+            + transversal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
+            "coronal": rx1["coronal"]
+            + coronal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
+            "sagittal": rx1["sagittal"]
+            + sagittal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
+        }
+
+    def update_display_position(self):
+        """Publish the median of every needle position in the last window."""
+        median_position = self.display_positions.take_median()
+        if median_position is None:
+            return
+
+        self.needle_tip_position = median_position
+        self.target_view.set_actual(median_position)
+        self.transversal_axis.set_actual(median_position["transversal"])
+        self.sagittal_axis.set_actual(median_position["sagittal"])
+        self.coronal_axis.set_actual(median_position["coronal"])
+
+        # Request the paint immediately after publishing the window median.
+        self.target_view.update()
+        self.transversal_axis.update()
+        self.sagittal_axis.update()
+        self.coronal_axis.update()
 
     def updated_text(self, _):
         self.current_needle = self.target_combobox.currentText()
@@ -789,6 +832,7 @@ class TrackingGUIWindow(QMainWindow):
 
     def updated_filter(self, _):
         self.filter_mode = self.filter_combobox.currentText()
+        self.display_positions.clear()
         if self.filter_mode == "No Filter":
             pass
         elif self.filter_mode == "Rolling Average" or self.filter_mode == "Rolling Median":
@@ -830,15 +874,6 @@ class TrackingGUIWindow(QMainWindow):
             self.exit_label.setGeometry(width_no_margin + margin - corner_width, margin, corner_width, corner_height)
             self.target_combobox.setGeometry(margin, height_no_margin + margin - corner_height, corner_width, corner_height)
             self.filter_combobox.setGeometry(width_no_margin + margin - corner_width, height_no_margin + margin - corner_height, corner_width, corner_height)
-
-            mode_button_width = int(width_no_margin * 0.20)
-            mode_button_height = int(corner_height * 0.65)
-            self.headset_mode_button.setGeometry(
-                margin + int((width_no_margin - mode_button_width) / 2),
-                margin,
-                mode_button_width,
-                mode_button_height,
-            )
 
             self.transversal_axis.setGeometry(
                 margin,

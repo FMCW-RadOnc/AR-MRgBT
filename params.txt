@@ -15,7 +15,7 @@
 - target_update_freq_ms
     * How often to update the list of possible targets (in ms) 
 - display_update_freq_ms
-    * How often to update the axis displays (in ms)
+    * How often to update the needle display (in ms). Every tracking position received during this window contributes to the coordinate-wise median shown at the end of the window.
 - green_threshold_mm
     * The maximum possible distance from the target (in mm) for the axis display to be green
 - yellow_threshold_mm

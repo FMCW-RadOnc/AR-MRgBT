@@ -7,7 +7,7 @@
     "one_euro_derivative_cutoff_hz" : 1.0,
     "one_euro_max_speed_mm_s" : 200,
     "target_update_freq_ms" : 1000,
-    "display_update_freq_ms" : 50,
+    "display_update_freq_ms" : 250,
     "green_threshold_mm" : 5,
     "yellow_threshold_mm" : 10,
     "max_threshold_mm" : 30,

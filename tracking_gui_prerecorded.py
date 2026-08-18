@@ -61,8 +61,8 @@ def move_to_new_monitor(window : QMainWindow, index):
     window.update_s()
 
 class Communicate(QObject):
-    # For simplicity, a signal will just be 3 floats: x,y,z coordinates in dcs
-    data_signal = pyqtSignal(float, float, float, str)
+    # One signal represents one scanner message so RX1 and RX2 stay paired.
+    data_signal = pyqtSignal(object)
 
 def process_tracking_data(data):
     if data is None:
@@ -76,20 +76,24 @@ def process_tracking_data(data):
     3) From each projection, get the appropriate "x", "y", or "z" (other values will be zero and should be ignored)
     """
 
+    coil_measurements = {}
     for coil in data["coils"]:
         coil_name = coil["name"]
+        projections = {}
         projs = coil["projections"]
         for proj in projs:
-            if proj["name"] == "X":
-                x_proj = proj
-            elif proj["name"] == "Y":
-                y_proj = proj
-            elif proj["name"] == "Z":
-                z_proj = proj
+            projections[proj["name"]] = proj
+        if not {"X", "Y", "Z"}.issubset(projections):
+            continue
+        x_proj = projections["X"]
+        y_proj = projections["Y"]
+        z_proj = projections["Z"]
         x = x_proj["coordinates"]["dcs"]["centerPosition"]["x"]
         y = y_proj["coordinates"]["dcs"]["centerPosition"]["y"]
         z = z_proj["coordinates"]["dcs"]["centerPosition"]["z"]
-        comm.data_signal.emit(x, y, z, coil_name)
+        coil_measurements[coil_name] = (x, y, z)
+    if coil_measurements:
+        comm.data_signal.emit(coil_measurements)
 
 # Should be analogous to on_message in tracking_gui.py
 def on_message(message):
@@ -105,7 +109,7 @@ if __name__ == "__main__":
     #window.load_point_data_from_specified_file("temp_desired.csv")
     
     comm = Communicate()
-    comm.data_signal.connect(window.update_coil)
+    comm.data_signal.connect(window.update_tracking_frame)
 
     p.start()
     c.start()

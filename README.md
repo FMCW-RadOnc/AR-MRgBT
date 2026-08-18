@@ -14,7 +14,9 @@ To run the AR HUD, run the following commands in command line:
    - Read "params.txt" for an explanation on what each parameter does   
 - Run the HUD via "python tracking_gui.py"
 
-The HUD starts in its normal gray interface. Click **Headset Mode** to switch to a black, reduced-glare display that hides the controls and leaves only the tracking visuals. Press Escape once to return to the normal interface. From the normal interface, Escape retains its original exit-confirmation behavior.
+The HUD uses a black, reduced-glare headset display. The clock and exit instructions are in the top corners, and the point and filter selectors are in the bottom corners. Press Escape to open the exit-confirmation dialog.
+
+The needle display updates every 250 ms (4 frames per second by default). Each update shows the coordinate-wise median of the complete needle positions received since the previous update. Incoming samples are still processed by the selected tracking filter at their native rate. `One Euro Filter` is selected by default, so the filter is applied first and the display median second.
 
 ## Other Utilities
 
@@ -22,7 +24,7 @@ Besides the normal HUD, there are several other programs that could be useful wh
 
 ### Preview the targeting HUD with simulated sensor data
 
-Run `python gui_test.py` to preview the targeting circles without Access-i or MIM data. The simulator slowly cycles through all 27 combinations of horizontal, vertical, and insertion-depth states, labeling and holding each case so it can be inspected.
+Run `python gui_test.py` to preview the targeting circles without Access-i or MIM data. Move the mouse to control the simulated needle's horizontal and vertical position, and use the scroll wheel to adjust its insertion depth in 0.5 mm steps.
 
 ### Record data from the sensors to use it later
 
