@@ -4,3 +4,4 @@ recording*/
 tracking_data*.txt
 MIMData
 slice displacement.txt
+coil_coordinates_log.csv

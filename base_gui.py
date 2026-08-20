@@ -73,6 +73,64 @@ YELLOW_THRESHOLD = None
 MAX_THRESHOLD = None
 DIST_BETWEEN_RX1_AND_NEEDLE_TIP = None
 XY_TRAVEL_FRACTION = 0.37
+COIL_LOG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "coil_coordinates_log.csv",
+)
+
+
+class CoilCoordinateLogger:
+    """Write one pair of filtered coil positions per display refresh."""
+
+    COLUMN_WIDTH = 18
+
+    @classmethod
+    def _space_columns(cls, values):
+        return [
+            str(value).ljust(cls.COLUMN_WIDTH) if index < len(values) - 1 else str(value)
+            for index, value in enumerate(values)
+        ]
+
+    def __init__(self, path=COIL_LOG_PATH):
+        # Opening with "w" gives each application run a fresh log while
+        # leaving the completed run available for inspection after shutdown.
+        self._file = open(path, "w", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(self._space_columns([
+            "Time",
+            "RX1 X (mm)",
+            "RX1 Y (mm)",
+            "RX1 Z (mm)",
+            "RX2 X (mm)",
+            "RX2 Y (mm)",
+            "RX2 Z (mm)",
+        ]))
+        self._file.flush()
+
+    def write(self, coil_positions, timestamp=None):
+        rx1 = coil_positions.get("RX1")
+        rx2 = coil_positions.get("RX2")
+        if rx1 is None or rx2 is None or self._file.closed:
+            return
+
+        if timestamp is None:
+            timestamp = datetime.now()
+        time_text = timestamp.strftime("%H:%M:%S.%f")[:-3]
+        self._writer.writerow(self._space_columns([
+            time_text,
+            f'{rx1["sagittal"]:.3f}',
+            f'{rx1["coronal"]:.3f}',
+            f'{rx1["transversal"]:.3f}',
+            f'{rx2["sagittal"]:.3f}',
+            f'{rx2["coronal"]:.3f}',
+            f'{rx2["transversal"]:.3f}',
+        ]))
+        # Keep the on-disk log current even if the program is interrupted.
+        self._file.flush()
+
+    def close(self):
+        if not self._file.closed:
+            self._file.close()
 
 def init_params():
     global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, ONE_EURO_MIN_CUTOFF_HZ, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF_HZ, ONE_EURO_MAX_SPEED_MM_S, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
@@ -576,6 +634,8 @@ class TrackingGUIWindow(QMainWindow):
         self.coil_positions = {"RX1" : None, "RX2" : None}
         self.needle_tip_position = None
         self.display_positions = DisplayMedianBuffer()
+        self.coil_logger = CoilCoordinateLogger()
+        QApplication.instance().aboutToQuit.connect(self.coil_logger.close)
 
         self.filters : dict[str, KalmanFilter] = {}
         self.one_euro_filters : dict[str, OneEuroFilter] = {}
@@ -806,6 +866,7 @@ class TrackingGUIWindow(QMainWindow):
             return
 
         self.needle_tip_position = median_position
+        self.coil_logger.write(self.coil_positions)
         self.target_view.set_actual(median_position)
         self.transversal_axis.set_actual(median_position["transversal"])
         self.sagittal_axis.set_actual(median_position["sagittal"])
