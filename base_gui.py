@@ -37,7 +37,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QFrame,
     QLabel,
-    QMessageBox
+    QMessageBox,
+    QPushButton,
 )
 from PyQt6.QtGui import (
     QColorConstants,
@@ -50,7 +51,6 @@ from PyQt6.QtGui import (
 import math
 from PyQt6.QtCore import Qt, QTimer, QTime, QPointF, QRectF
 import csv
-import numpy as np
 import threading
 from kalman_filter import KalmanFilter
 from one_euro_filter import OneEuroFilter
@@ -77,6 +77,123 @@ COIL_LOG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "coil_coordinates_log.csv",
 )
+PULLBACK_OUTPUT_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "MIMData",
+)
+
+
+def calculate_tracker_tip(rx1_xyz, rx2_xyz, tip_offset_mm):
+    """Return the tracker-space tip and RX separation for one raw frame."""
+    try:
+        rx1_x, rx1_y, rx1_z = (float(value) for value in rx1_xyz)
+        rx2_x, rx2_y, rx2_z = (float(value) for value in rx2_xyz)
+    except (TypeError, ValueError):
+        return None, math.nan
+
+    dx = rx1_x - rx2_x
+    dy = rx1_y - rx2_y
+    dz = rx1_z - rx2_z
+    separation_mm = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if not math.isfinite(separation_mm) or separation_mm == 0:
+        return None, separation_mm
+
+    scale = float(tip_offset_mm) / separation_mm
+    return (
+        rx1_x + scale * dx,
+        rx1_y + scale * dy,
+        rx1_z + scale * dz,
+    ), separation_mm
+
+
+class PullbackRecorder:
+    """Stream calculated Access-i needle-tip positions to CSV."""
+
+    HEADER = [
+        "Timestamp",
+        "Sample",
+        "Tip X Tracker (mm)",
+        "Tip Y Tracker (mm)",
+        "Tip Z Tracker (mm)",
+        "Tip Calculation Valid",
+    ]
+
+    def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0):
+        self.output_dir = output_dir
+        self.tip_offset_mm = float(tip_offset_mm)
+        self.path = None
+        self.point_count = 0
+        self._file = None
+        self._writer = None
+
+    @property
+    def is_recording(self):
+        return self._file is not None and not self._file.closed
+
+    def start(self, timestamp=None):
+        if self.is_recording:
+            return self.path
+
+        if timestamp is None:
+            timestamp = datetime.now()
+        os.makedirs(self.output_dir, exist_ok=True)
+        filename = timestamp.strftime("%m_%d_%Y_pullback_%H_%M_%S_%f.csv")
+        self.path = os.path.join(self.output_dir, filename)
+        self._file = open(self.path, "w", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(self.HEADER)
+        self._file.flush()
+        self.point_count = 0
+        return self.path
+
+    @staticmethod
+    def _format_number(value):
+        if value is None:
+            return ""
+        return f"{value:.6f}"
+
+    def write_frame(self, coil_measurements, timestamp=None):
+        if not self.is_recording:
+            return False
+
+        if timestamp is None:
+            timestamp = datetime.now().astimezone()
+
+        try:
+            rx1 = tuple(float(value) for value in coil_measurements["RX1"])
+            rx2 = tuple(float(value) for value in coil_measurements["RX2"])
+            if len(rx1) != 3 or len(rx2) != 3:
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        tip, _ = calculate_tracker_tip(
+            rx1,
+            rx2,
+            self.tip_offset_mm,
+        )
+        geometry_valid = tip is not None
+
+        tip_x, tip_y, tip_z = tip if tip is not None else (None, None, None)
+        self.point_count += 1
+        self._writer.writerow([
+            timestamp.isoformat(timespec="milliseconds"),
+            self.point_count,
+            self._format_number(tip_x),
+            self._format_number(tip_y),
+            self._format_number(tip_z),
+            str(geometry_valid),
+        ])
+        # Preserve the pullback even if the application is interrupted.
+        self._file.flush()
+        return True
+
+    def stop(self):
+        if self.is_recording:
+            self._file.close()
+        self._file = None
+        self._writer = None
+        return self.path
 
 
 class CoilCoordinateLogger:
@@ -635,7 +752,11 @@ class TrackingGUIWindow(QMainWindow):
         self.needle_tip_position = None
         self.display_positions = DisplayMedianBuffer()
         self.coil_logger = CoilCoordinateLogger()
+        self.pullback_recorder = PullbackRecorder(
+            tip_offset_mm=DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+        )
         QApplication.instance().aboutToQuit.connect(self.coil_logger.close)
+        QApplication.instance().aboutToQuit.connect(self.stop_pullback)
 
         self.filters : dict[str, KalmanFilter] = {}
         self.one_euro_filters : dict[str, OneEuroFilter] = {}
@@ -682,6 +803,12 @@ class TrackingGUIWindow(QMainWindow):
         self.exit_label.setWordWrap(True)
         self.exit_label.setStyleSheet("background-color: lightblue;")
 
+        self.pullback_button = QPushButton("Start Pullback", parent=self)
+        self.pullback_button.setFont(QFont('Arial', 20))
+        self.pullback_button.setAccessibleName("Pullback control")
+        self.pullback_button.clicked.connect(self.toggle_pullback)
+        self._set_pullback_button_state(False)
+
         self.transversal_axis = AxisVisual(
             is_vertical=True,
             labels=["S", "I"],
@@ -722,6 +849,47 @@ class TrackingGUIWindow(QMainWindow):
         current_time = QTime.currentTime()
         label_time = current_time.toString('hh:mm:ss')
         self.digital_clock.setText(label_time)
+
+    def _set_pullback_button_state(self, is_active):
+        if is_active:
+            self.pullback_button.setText("Stop Pullback")
+            background_color = "#b71c1c"
+        else:
+            self.pullback_button.setText("Start Pullback")
+            background_color = "#1b5e20"
+        self.pullback_button.setStyleSheet(
+            "QPushButton {"
+            f"background-color: {background_color}; color: white; "
+            "border: 2px solid white; border-radius: 8px; padding: 8px;"
+            "}"
+            "QPushButton:pressed { background-color: #424242; }"
+        )
+
+    def toggle_pullback(self):
+        if self.pullback_recorder.is_recording:
+            self.stop_pullback()
+        else:
+            self.start_pullback()
+
+    def start_pullback(self):
+        if self.pullback_recorder.is_recording:
+            return
+        try:
+            self.pullback_recorder.start()
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "Unable to Start Pullback",
+                f"The pullback file could not be created:\n{error}",
+            )
+            return
+        self._set_pullback_button_state(True)
+
+    def stop_pullback(self):
+        if not self.pullback_recorder.is_recording:
+            return
+        self.pullback_recorder.stop()
+        self._set_pullback_button_state(False)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -820,6 +988,9 @@ class TrackingGUIWindow(QMainWindow):
         if not required_coils.issubset(coil_measurements):
             return
 
+        # Pullback data intentionally preserves the unfiltered Access-i frame.
+        self.pullback_recorder.write_frame(coil_measurements)
+
         for coil_name in ("RX1", "RX2"):
             x, y, z = coil_measurements[coil_name]
             self.update_coil(x, y, z, coil_name)
@@ -835,28 +1006,19 @@ class TrackingGUIWindow(QMainWindow):
         if rx1 is None or rx2 is None:
             return None
 
-        diff = np.array(
-            [
-                rx1["transversal"] - rx2["transversal"],
-                rx1["coronal"] - rx2["coronal"],
-                rx1["sagittal"] - rx2["sagittal"],
-            ],
-            dtype=float,
+        tip, _ = calculate_tracker_tip(
+            (rx1["sagittal"], rx1["coronal"], rx1["transversal"]),
+            (rx2["sagittal"], rx2["coronal"], rx2["transversal"]),
+            DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
         )
-        distance = np.linalg.norm(diff)
-        if not np.isfinite(distance) or distance == 0:
+        if tip is None:
             return None
 
-        transversal_unit_diff, coronal_unit_diff, sagittal_unit_diff = (
-            diff / distance
-        ).tolist()
+        tip_x, tip_y, tip_z = tip
         return {
-            "transversal": rx1["transversal"]
-            + transversal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
-            "coronal": rx1["coronal"]
-            + coronal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
-            "sagittal": rx1["sagittal"]
-            + sagittal_unit_diff * DIST_BETWEEN_RX1_AND_NEEDLE_TIP,
+            "transversal": tip_z,
+            "coronal": tip_y,
+            "sagittal": tip_x,
         }
 
     def update_display_position(self):
@@ -933,6 +1095,13 @@ class TrackingGUIWindow(QMainWindow):
 
             self.digital_clock.setGeometry(margin, margin, corner_width, corner_height)
             self.exit_label.setGeometry(width_no_margin + margin - corner_width, margin, corner_width, corner_height)
+            pullback_width = int(0.22 * width_no_margin)
+            self.pullback_button.setGeometry(
+                margin + int((width_no_margin - pullback_width) / 2),
+                margin,
+                pullback_width,
+                corner_height,
+            )
             self.target_combobox.setGeometry(margin, height_no_margin + margin - corner_height, corner_width, corner_height)
             self.filter_combobox.setGeometry(width_no_margin + margin - corner_width, height_no_margin + margin - corner_height, corner_width, corner_height)
 

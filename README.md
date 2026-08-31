@@ -18,6 +18,16 @@ The HUD uses a black, reduced-glare headset display. The clock and exit instruct
 
 The needle display updates every 100 ms (10 frames per second by default). Each update shows the coordinate-wise median of the complete needle positions received since the previous update. Incoming samples are still processed by the selected tracking filter at their native rate. `One Euro Filter` is selected by default, so the filter is applied first and the display median second.
 
+### Record a needle pullback
+
+Once the needle is correctly placed, click **Start Pullback** at the top center of the HUD and withdraw the needle. The button changes to **Stop Pullback** while recording. Click it after the needle has been removed.
+
+Each complete RX1/RX2 Access-i frame is used immediately at the incoming tracking rate to calculate a needle-tip position. The result is written to a timestamped file in `MIMData` named `MM_DD_YYYY_pullback_HH_MM_SS_microseconds.csv`. An active pullback is also closed safely when the HUD exits.
+
+Each CSV row contains exactly six fields: an ISO 8601 timestamp, sample number, tracker-space tip X/Y/Z coordinates, and a tip-calculation-valid flag. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces an invalid row with blank tip coordinates.
+
+The pullback CSV deliberately remains in the Access-i tracker coordinate frame. It is an auditable source file for later rigid registration into DICOM patient coordinates and RTSTRUCT creation; it is not itself a directly importable MIM contour.
+
 ## Other Utilities
 
 Besides the normal HUD, there are several other programs that could be useful when developing or troubleshooting.
