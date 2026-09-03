@@ -110,19 +110,17 @@ class PullbackRecorder:
     """Stream calculated Access-i needle-tip positions to CSV."""
 
     HEADER = [
+        "Needle",
         "Timestamp",
-        "Sample",
-        "Tip X Tracker (mm)",
-        "Tip Y Tracker (mm)",
-        "Tip Z Tracker (mm)",
-        "Tip Calculation Valid",
+        "X Tracker (mm)",
+        "Y Tracker (mm)",
+        "Z Tracker (mm)",
     ]
 
     def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0):
         self.output_dir = output_dir
         self.tip_offset_mm = float(tip_offset_mm)
         self.path = None
-        self.point_count = 0
         self._file = None
         self._writer = None
 
@@ -143,7 +141,6 @@ class PullbackRecorder:
         self._writer = csv.writer(self._file)
         self._writer.writerow(self.HEADER)
         self._file.flush()
-        self.point_count = 0
         return self.path
 
     @staticmethod
@@ -152,7 +149,7 @@ class PullbackRecorder:
             return ""
         return f"{value:.6f}"
 
-    def write_frame(self, coil_measurements, timestamp=None):
+    def write_frame(self, coil_measurements, needle_name, timestamp=None):
         if not self.is_recording:
             return False
 
@@ -172,17 +169,13 @@ class PullbackRecorder:
             rx2,
             self.tip_offset_mm,
         )
-        geometry_valid = tip is not None
-
         tip_x, tip_y, tip_z = tip if tip is not None else (None, None, None)
-        self.point_count += 1
         self._writer.writerow([
+            needle_name or "",
             timestamp.isoformat(timespec="milliseconds"),
-            self.point_count,
             self._format_number(tip_x),
             self._format_number(tip_y),
             self._format_number(tip_z),
-            str(geometry_valid),
         ])
         # Preserve the pullback even if the application is interrupted.
         self._file.flush()
@@ -988,8 +981,12 @@ class TrackingGUIWindow(QMainWindow):
         if not required_coils.issubset(coil_measurements):
             return
 
-        # Pullback data intentionally preserves the unfiltered Access-i frame.
-        self.pullback_recorder.write_frame(coil_measurements)
+        # Calculate the tracker-space tip from the raw Access-i frame before
+        # the display filter is applied.
+        self.pullback_recorder.write_frame(
+            coil_measurements,
+            self.target_combobox.currentText(),
+        )
 
         for coil_name in ("RX1", "RX2"):
             x, y, z = coil_measurements[coil_name]

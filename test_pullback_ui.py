@@ -17,9 +17,9 @@ class FakePullbackRecorder:
     def start(self):
         self.is_recording = True
 
-    def write_frame(self, coil_measurements):
+    def write_frame(self, coil_measurements, needle_name):
         if self.is_recording:
-            self.points.append(coil_measurements.copy())
+            self.points.append((needle_name, coil_measurements.copy()))
 
     def stop(self):
         self.is_recording = False
@@ -39,6 +39,18 @@ class PullbackUITests(unittest.TestCase):
         desired_patch.start()
         self.window = base_gui.TrackingGUIWindow()
         self.window.pullback_recorder = FakePullbackRecorder()
+        self.window.set_desired({
+            "Needle A": {
+                "transversal": 0.0,
+                "coronal": 0.0,
+                "sagittal": 0.0,
+            },
+            "Needle B": {
+                "transversal": 0.0,
+                "coronal": 0.0,
+                "sagittal": 0.0,
+            },
+        })
 
     def tearDown(self):
         self.window.display_timer.stop()
@@ -65,12 +77,17 @@ class PullbackUITests(unittest.TestCase):
             "RX1": (1.0, 2.0, 3.0),
             "RX2": (1.0, 2.0, -7.0),
         })
+        self.window.target_combobox.setCurrentText("Needle B")
         self.window.update_tracking_frame({
             "RX1": (1.0, 2.0, 2.0),
             "RX2": (1.0, 2.0, -8.0),
         })
 
         self.assertEqual(len(self.window.pullback_recorder.points), 2)
+        self.assertEqual(
+            [point[0] for point in self.window.pullback_recorder.points],
+            ["Needle A", "Needle B"],
+        )
 
 
 if __name__ == "__main__":

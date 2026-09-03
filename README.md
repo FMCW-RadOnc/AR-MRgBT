@@ -24,7 +24,7 @@ Once the needle is correctly placed, click **Start Pullback** at the top center 
 
 Each complete RX1/RX2 Access-i frame is used immediately at the incoming tracking rate to calculate a needle-tip position. The result is written to a timestamped file in `MIMData` named `MM_DD_YYYY_pullback_HH_MM_SS_microseconds.csv`. An active pullback is also closed safely when the HUD exits.
 
-Each CSV row contains exactly six fields: an ISO 8601 timestamp, sample number, tracker-space tip X/Y/Z coordinates, and a tip-calculation-valid flag. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces an invalid row with blank tip coordinates.
+Each CSV row contains exactly five fields: the currently selected needle, an ISO 8601 timestamp, and the calculated tracker-space X/Y/Z tip coordinates. If the selected needle changes during a pullback, subsequent rows use the new selection. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces a row with blank X/Y/Z coordinates.
 
 The pullback CSV deliberately remains in the Access-i tracker coordinate frame. It is an auditable source file for later rigid registration into DICOM patient coordinates and RTSTRUCT creation; it is not itself a directly importable MIM contour.
 
