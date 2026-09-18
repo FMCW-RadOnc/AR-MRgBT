@@ -24,7 +24,7 @@ Once the needle is correctly placed, click **Start Pullback** at the top center 
 
 Each complete RX1/RX2 Access-i frame is used immediately at the incoming tracking rate to calculate a needle-tip position. The result is written to a timestamped file in `MIMData` named `MM_DD_YYYY_pullback_HH_MM_SS_microseconds.csv`. An active pullback is also closed safely when the HUD exits.
 
-Each CSV row contains exactly five fields: the currently selected needle, an ISO 8601 timestamp, and the calculated tracker-space X/Y/Z tip coordinates. If the selected needle changes during a pullback, subsequent rows use the new selection. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces a row with blank X/Y/Z coordinates.
+Each CSV row contains exactly five fields: the currently selected needle, a local time in `HH:MM:SS.mmm` format (for example, `12:01:29.817`, without a date or UTC offset), and the calculated tracker-space X/Y/Z tip coordinates. The recording date remains in the filename. If the selected needle changes during a pullback, subsequent rows use the new selection. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces a row with blank X/Y/Z coordinates.
 
 The pullback CSV deliberately remains in the Access-i tracker coordinate frame. It is an auditable source file for later rigid registration into DICOM patient coordinates and RTSTRUCT creation; it is not itself a directly importable MIM contour.
 
@@ -56,3 +56,7 @@ If you cannot connect to the sensors, make sure that a persistent route is set i
 3...00 1b 41 0a 0a 20 ......Intel(R) Ethernet Controller (3) I225-V
 
 To check if the route exists run the command "route print".
+
+### Needle-tip distance log
+
+`coil_coordinates_log.csv` starts fresh each time the HUD runs. It records `Time` (`HH:MM:SS.mmm`) and `Distance to target x (mm)`, `Distance to target y (mm)`, and `Distance to target z (mm)`. Each signed offset is the displayed needle-tip position minus the currently selected target, using the same tracking filter and display median as the HUD. Positive and negative directions follow the HUD coordinate convention. Rows are skipped when the target or tip is unavailable or an offset is non-finite. The separate pullback CSV continues to store raw calculated tracker-space tip positions.

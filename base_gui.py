@@ -172,7 +172,7 @@ class PullbackRecorder:
         tip_x, tip_y, tip_z = tip if tip is not None else (None, None, None)
         self._writer.writerow([
             needle_name or "",
-            timestamp.isoformat(timespec="milliseconds"),
+            timestamp.strftime("%H:%M:%S.%f")[:-3],
             self._format_number(tip_x),
             self._format_number(tip_y),
             self._format_number(tip_z),
@@ -190,52 +190,35 @@ class PullbackRecorder:
 
 
 class CoilCoordinateLogger:
-    """Write one pair of filtered coil positions per display refresh."""
-
-    COLUMN_WIDTH = 18
-
-    @classmethod
-    def _space_columns(cls, values):
-        return [
-            str(value).ljust(cls.COLUMN_WIDTH) if index < len(values) - 1 else str(value)
-            for index, value in enumerate(values)
-        ]
+    """Write signed needle-tip offsets from the selected target per refresh."""
 
     def __init__(self, path=COIL_LOG_PATH):
-        # Opening with "w" gives each application run a fresh log while
-        # leaving the completed run available for inspection after shutdown.
+        # Each application run starts a fresh log.
         self._file = open(path, "w", newline="", encoding="utf-8")
         self._writer = csv.writer(self._file)
-        self._writer.writerow(self._space_columns([
+        self._writer.writerow([
             "Time",
-            "RX1 X (mm)",
-            "RX1 Y (mm)",
-            "RX1 Z (mm)",
-            "RX2 X (mm)",
-            "RX2 Y (mm)",
-            "RX2 Z (mm)",
-        ]))
+            "Distance to target x (mm)",
+            "Distance to target y (mm)",
+            "Distance to target z (mm)",
+        ])
         self._file.flush()
 
-    def write(self, coil_positions, timestamp=None):
-        rx1 = coil_positions.get("RX1")
-        rx2 = coil_positions.get("RX2")
-        if rx1 is None or rx2 is None or self._file.closed:
+    def write(self, needle_tip, target, timestamp=None):
+        if needle_tip is None or target is None or self._file.closed:
             return
-
+        offsets = [
+            needle_tip[axis] - target[axis]
+            for axis in ("sagittal", "coronal", "transversal")
+        ]
+        if not all(math.isfinite(value) for value in offsets):
+            return
         if timestamp is None:
             timestamp = datetime.now()
-        time_text = timestamp.strftime("%H:%M:%S.%f")[:-3]
-        self._writer.writerow(self._space_columns([
-            time_text,
-            f'{rx1["sagittal"]:.3f}',
-            f'{rx1["coronal"]:.3f}',
-            f'{rx1["transversal"]:.3f}',
-            f'{rx2["sagittal"]:.3f}',
-            f'{rx2["coronal"]:.3f}',
-            f'{rx2["transversal"]:.3f}',
-        ]))
-        # Keep the on-disk log current even if the program is interrupted.
+        self._writer.writerow([
+            timestamp.strftime("%H:%M:%S.%f")[:-3],
+            *(f"{value:.3f}" for value in offsets),
+        ])
         self._file.flush()
 
     def close(self):
@@ -1025,7 +1008,10 @@ class TrackingGUIWindow(QMainWindow):
             return
 
         self.needle_tip_position = median_position
-        self.coil_logger.write(self.coil_positions)
+        self.coil_logger.write(
+            median_position,
+            self.desired_positions.get(self.target_combobox.currentText()),
+        )
         self.target_view.set_actual(median_position)
         self.transversal_axis.set_actual(median_position["transversal"])
         self.sagittal_axis.set_actual(median_position["sagittal"])

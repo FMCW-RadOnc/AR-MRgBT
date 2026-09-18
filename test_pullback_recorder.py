@@ -2,7 +2,7 @@ import csv
 import io
 import os
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from base_gui import PullbackRecorder, calculate_tracker_tip
@@ -49,7 +49,8 @@ class PullbackRecorderTests(unittest.TestCase):
             recorder.write_frame(
                 {"RX1": (1.0, 2.0, 3.0), "RX2": (1.0, 2.0, -8.0)},
                 "Needle B",
-                datetime(2026, 8, 28, 14, 5, 8, 500000),
+                datetime(2026, 8, 28, 12, 1, 29, 817123,
+                         tzinfo=timezone(timedelta(hours=-5))),
             )
             stream.seek(0)
             self.assertEqual(
@@ -58,12 +59,12 @@ class PullbackRecorderTests(unittest.TestCase):
                     PullbackRecorder.HEADER,
                     [
                         "Needle A",
-                        "2026-08-28T14:05:07.500",
+                        "14:05:07.500",
                         "1.000000", "2.000000", "13.000000",
                     ],
                     [
                         "Needle B",
-                        "2026-08-28T14:05:08.500",
+                        "12:01:29.817",
                         "1.000000", "2.000000", "13.000000",
                     ],
                 ],
