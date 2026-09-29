@@ -47,6 +47,8 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
     QFont,
+    QShortcut,
+    QKeySequence,
 )
 import math
 from PyQt6.QtCore import Qt, QTimer, QTime, QPointF, QRectF
@@ -107,7 +109,7 @@ def calculate_tracker_tip(rx1_xyz, rx2_xyz, tip_offset_mm):
 
 
 class PullbackRecorder:
-    """Stream calculated Access-i needle-tip positions to CSV."""
+    """Record calculated Access-i needle-tip positions."""
 
     HEADER = [
         "Needle",
@@ -783,6 +785,11 @@ class TrackingGUIWindow(QMainWindow):
         self.pullback_button.setFont(QFont('Arial', 20))
         self.pullback_button.setAccessibleName("Pullback control")
         self.pullback_button.clicked.connect(self.toggle_pullback)
+        self.pullback_button.setToolTip("Press Tab to start or stop pullback recording")
+        self.pullback_shortcut = QShortcut(QKeySequence("Tab"), self)
+        self.pullback_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self.pullback_shortcut.setAutoRepeat(False)
+        self.pullback_shortcut.activated.connect(self.toggle_pullback)
         self._set_pullback_button_state(False)
 
         self.transversal_axis = AxisVisual(

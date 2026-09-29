@@ -20,13 +20,13 @@ The needle display updates every 100 ms (10 frames per second by default). Each 
 
 ### Record a needle pullback
 
-Once the needle is correctly placed, click **Start Pullback** at the top center of the HUD and withdraw the needle. The button changes to **Stop Pullback** while recording. Click it after the needle has been removed.
+Once the needle is correctly placed, press **Tab** or click **Start Pullback** at the top center of the HUD and withdraw the needle. The button changes to **Stop Pullback** while recording. Press **Tab** again or click the button after the needle has been removed. The shortcut works while the HUD is active; holding Tab does not repeatedly toggle recording.
 
 Each complete RX1/RX2 Access-i frame is used immediately at the incoming tracking rate to calculate a needle-tip position. The result is written to a timestamped file in `MIMData` named `MM_DD_YYYY_pullback_HH_MM_SS_microseconds.csv`. An active pullback is also closed safely when the HUD exits.
 
-Each CSV row contains exactly five fields: the currently selected needle, a local time in `HH:MM:SS.mmm` format (for example, `12:01:29.817`, without a date or UTC offset), and the calculated tracker-space X/Y/Z tip coordinates. The recording date remains in the filename. If the selected needle changes during a pullback, subsequent rows use the new selection. The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. A zero or non-finite RX1/RX2 separation produces a row with blank X/Y/Z coordinates.
+Each pullback CSV row contains exactly five fields: `Needle`, `Timestamp` (`HH:MM:SS.mmm`), `X Tracker (mm)`, `Y Tracker (mm)`, and `Z Tracker (mm)`. Coordinates are the calculated needle-tip positions. Invalid tip geometry produces blank coordinates. Distance-to-target values are not recorded in pullback CSVs.
 
-The pullback CSV deliberately remains in the Access-i tracker coordinate frame. It is an auditable source file for later rigid registration into DICOM patient coordinates and RTSTRUCT creation; it is not itself a directly importable MIM contour.
+The tracker-space tip uses `Tip = RX1 + offset * (RX1 - RX2) / |RX1 - RX2|`. The [Python MIM contour importer](pythonPullbackPoints/README.md) uses the absolute tracker tip columns and the confirmed mapping `DICOM = (-X, -Y, Z)`, with no target offset. It accepts multiple pullback CSVs and creates a separate thin connected contour per file and needle. The separate continuous coordinate log records HUD-relative distances and is not used by the importer.
 
 ## Other Utilities
 
