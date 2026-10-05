@@ -56,6 +56,7 @@ import csv
 import threading
 from kalman_filter import KalmanFilter
 from one_euro_filter import OneEuroFilter
+from pullback_recorder import PullbackRecorder, PullbackSettings, calculate_tracker_tip
 from display_median import DisplayMedianBuffer
 from datetime import datetime
 import statistics
@@ -74,6 +75,7 @@ GREEN_THRESHOLD = None
 YELLOW_THRESHOLD = None
 MAX_THRESHOLD = None
 DIST_BETWEEN_RX1_AND_NEEDLE_TIP = None
+PULLBACK_SETTINGS = None
 XY_TRAVEL_FRACTION = 0.37
 COIL_LOG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -83,112 +85,6 @@ PULLBACK_OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "MIMData",
 )
-
-
-def calculate_tracker_tip(rx1_xyz, rx2_xyz, tip_offset_mm):
-    """Return the tracker-space tip and RX separation for one raw frame."""
-    try:
-        rx1_x, rx1_y, rx1_z = (float(value) for value in rx1_xyz)
-        rx2_x, rx2_y, rx2_z = (float(value) for value in rx2_xyz)
-    except (TypeError, ValueError):
-        return None, math.nan
-
-    dx = rx1_x - rx2_x
-    dy = rx1_y - rx2_y
-    dz = rx1_z - rx2_z
-    separation_mm = math.sqrt(dx * dx + dy * dy + dz * dz)
-    if not math.isfinite(separation_mm) or separation_mm == 0:
-        return None, separation_mm
-
-    scale = float(tip_offset_mm) / separation_mm
-    return (
-        rx1_x + scale * dx,
-        rx1_y + scale * dy,
-        rx1_z + scale * dz,
-    ), separation_mm
-
-
-class PullbackRecorder:
-    """Record calculated Access-i needle-tip positions."""
-
-    HEADER = [
-        "Needle",
-        "Timestamp",
-        "X Tracker (mm)",
-        "Y Tracker (mm)",
-        "Z Tracker (mm)",
-    ]
-
-    def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0):
-        self.output_dir = output_dir
-        self.tip_offset_mm = float(tip_offset_mm)
-        self.path = None
-        self._file = None
-        self._writer = None
-
-    @property
-    def is_recording(self):
-        return self._file is not None and not self._file.closed
-
-    def start(self, timestamp=None):
-        if self.is_recording:
-            return self.path
-
-        if timestamp is None:
-            timestamp = datetime.now()
-        os.makedirs(self.output_dir, exist_ok=True)
-        filename = timestamp.strftime("%m_%d_%Y_pullback_%H_%M_%S_%f.csv")
-        self.path = os.path.join(self.output_dir, filename)
-        self._file = open(self.path, "w", newline="", encoding="utf-8")
-        self._writer = csv.writer(self._file)
-        self._writer.writerow(self.HEADER)
-        self._file.flush()
-        return self.path
-
-    @staticmethod
-    def _format_number(value):
-        if value is None:
-            return ""
-        return f"{value:.6f}"
-
-    def write_frame(self, coil_measurements, needle_name, timestamp=None):
-        if not self.is_recording:
-            return False
-
-        if timestamp is None:
-            timestamp = datetime.now().astimezone()
-
-        try:
-            rx1 = tuple(float(value) for value in coil_measurements["RX1"])
-            rx2 = tuple(float(value) for value in coil_measurements["RX2"])
-            if len(rx1) != 3 or len(rx2) != 3:
-                return False
-        except (KeyError, TypeError, ValueError):
-            return False
-
-        tip, _ = calculate_tracker_tip(
-            rx1,
-            rx2,
-            self.tip_offset_mm,
-        )
-        tip_x, tip_y, tip_z = tip if tip is not None else (None, None, None)
-        self._writer.writerow([
-            needle_name or "",
-            timestamp.strftime("%H:%M:%S.%f")[:-3],
-            self._format_number(tip_x),
-            self._format_number(tip_y),
-            self._format_number(tip_z),
-        ])
-        # Preserve the pullback even if the application is interrupted.
-        self._file.flush()
-        return True
-
-    def stop(self):
-        if self.is_recording:
-            self._file.close()
-        self._file = None
-        self._writer = None
-        return self.path
 
 
 class CoilCoordinateLogger:
@@ -228,9 +124,10 @@ class CoilCoordinateLogger:
             self._file.close()
 
 def init_params():
-    global ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, ONE_EURO_MIN_CUTOFF_HZ, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF_HZ, ONE_EURO_MAX_SPEED_MM_S, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+    global PULLBACK_SETTINGS, ROLLING_INTERVAL, KF_PROCESS_NOISE_COEF, KF_OBSERVATION_NOISE_COEF, ONE_EURO_MIN_CUTOFF_HZ, ONE_EURO_BETA, ONE_EURO_DERIVATIVE_CUTOFF_HZ, ONE_EURO_MAX_SPEED_MM_S, TARGET_UPDATE_FREQ_MS, DISPLAY_UPDATE_FREQ_MS, GREEN_THRESHOLD, YELLOW_THRESHOLD, MAX_THRESHOLD, DIST_BETWEEN_RX1_AND_NEEDLE_TIP
     with open("params.json", "r") as p:
         par = json.load(p)
+    PULLBACK_SETTINGS = PullbackSettings(**par.get("pullback", {}))
     ROLLING_INTERVAL = par["rolling_interval"]
     KF_PROCESS_NOISE_COEF = par["kf_process_noise_coef_mm"]
     KF_OBSERVATION_NOISE_COEF = par["kf_observation_noise_coef_mm"]
@@ -731,10 +628,10 @@ class TrackingGUIWindow(QMainWindow):
         self.display_positions = DisplayMedianBuffer()
         self.coil_logger = CoilCoordinateLogger()
         self.pullback_recorder = PullbackRecorder(
-            tip_offset_mm=DIST_BETWEEN_RX1_AND_NEEDLE_TIP
+            tip_offset_mm=DIST_BETWEEN_RX1_AND_NEEDLE_TIP, settings=PULLBACK_SETTINGS
         )
         QApplication.instance().aboutToQuit.connect(self.coil_logger.close)
-        QApplication.instance().aboutToQuit.connect(self.stop_pullback)
+        QApplication.instance().aboutToQuit.connect(lambda: self.stop_pullback(show_summary=False))
 
         self.filters : dict[str, KalmanFilter] = {}
         self.one_euro_filters : dict[str, OneEuroFilter] = {}
@@ -868,11 +765,21 @@ class TrackingGUIWindow(QMainWindow):
             return
         self._set_pullback_button_state(True)
 
-    def stop_pullback(self):
+    def stop_pullback(self, show_summary=True):
         if not self.pullback_recorder.is_recording:
             return
-        self.pullback_recorder.stop()
-        self._set_pullback_button_state(False)
+        try:
+            self.pullback_recorder.stop()
+        except (OSError, ValueError) as error:
+            message = f"A cleaned centerline could not be exported:\n{error}"
+            if show_summary:
+                QMessageBox.warning(self, "Pullback Cleanup Failed", message)
+            else:
+                print(message)
+        finally:
+            self._set_pullback_button_state(False)
+        result = self.pullback_recorder.cleaned_path or "No valid centerline exported"
+        self.pullback_button.setToolTip(f"{result}\nPress Tab to start or stop pullback recording")
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -968,15 +875,21 @@ class TrackingGUIWindow(QMainWindow):
     def update_tracking_frame(self, coil_measurements):
         """Process both coils from one scanner message as a coherent frame."""
         required_coils = {"RX1", "RX2"}
-        if not required_coils.issubset(coil_measurements):
-            return
-
-        # Calculate the tracker-space tip from the raw Access-i frame before
-        # the display filter is applied.
+        # The dedicated recorder validates and filters coherent raw frames;
+        # incomplete frames are discarded before centerline export.
         self.pullback_recorder.write_frame(
             coil_measurements,
             self.target_combobox.currentText(),
+            timestamp=coil_measurements.get("_pullback_timestamp"),
+            monotonic_seconds=coil_measurements.get("_pullback_clock"),
         )
+
+        if not required_coils.issubset(coil_measurements):
+            return
+        raw_tip, _ = calculate_tracker_tip(coil_measurements["RX1"], coil_measurements["RX2"],
+                                           DIST_BETWEEN_RX1_AND_NEEDLE_TIP)
+        if raw_tip is None:
+            return
 
         for coil_name in ("RX1", "RX2"):
             x, y, z = coil_measurements[coil_name]

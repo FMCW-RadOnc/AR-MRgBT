@@ -12,7 +12,7 @@ _core_spec = importlib.util.spec_from_file_location(
 _core = importlib.util.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core)
 read_paths = _core.read_paths
-fit_sheath_line = _core.fit_sheath_line
+fit_sheath_curve = _core.fit_sheath_curve
 interpolate = _core.interpolate
 connected_cells = _core.connected_cells
 
@@ -26,7 +26,7 @@ def import_contours(session, mr_image, csv_paths):
         raise ValueError("Select the reference MR series")
     if mr_image.getSpace().getDimensionCount() != 3:
         raise ValueError("Select a static 3D MR series")
-    paths = read_paths(csv_paths)
+    paths = read_paths(csv_paths, include_metadata=True)
     factory = session.getPointFactory()
     dicom = factory.getDicomCoordSystem()
     # Filter in the actual selected image grid, never using screenshot bounds.
@@ -34,7 +34,7 @@ def import_contours(session, mr_image, csv_paths):
     image_dims = list(mr_image.getSpace().getDataDims())
     filtered_paths = []
     total_skipped = 0
-    for source, needle, segments in paths:
+    for source, needle, segments, prepared in paths:
         retained = []
         skipped = 0
         for segment in segments:
@@ -56,7 +56,12 @@ def import_contours(session, mr_image, csv_paths):
         session.createLogger().info("{} / {}: retained {} points; excluded {} outside MR.".format(
             source, needle, sum(len(segment) for segment in retained), skipped))
         if retained:
-            filtered_paths.append((source, needle, [fit_sheath_line(retained)]))
+            # Acquisition already fitted these sections. Preserve their shape
+            # and gap boundaries rather than applying a second strong fit.
+            corrected = retained if prepared else [fit_sheath_curve(retained)]
+            filtered_paths.append((source, needle, corrected))
+            if prepared:
+                session.createLogger().info("{} / {}: prepared centerline; no additional smoothing.".format(source, needle))
     paths = filtered_paths
     existing = {str(c.getInfo().getName()) for c in mr_image.getContours()}
     existing.update(str(c.getInfo().getName()) for c in mr_image.getPointOverlays())
@@ -103,7 +108,8 @@ def import_contours(session, mr_image, csv_paths):
         for contour in reversed(created):
             contour.delete()
         raise
-    session.createLogger().info("Created {} fitted straight sheath contours; "
+    session.createLogger().info("Version 2.7.0: created {} sheath centerline contours; "
+                               "raw inputs use a robust cubic spline; prepared centerlines retain their sections; "
                                "excluded {} source points outside MR and {} contour-grid samples. "
                                "DICOM=(-X,-Y,Z), no target offset.".format(
                                    len(created), total_skipped, skipped_grid_samples))
@@ -112,8 +118,8 @@ def import_contours(session, mr_image, csv_paths):
 
 @mim_extension_entrypoint(
     name="Import Pullback Contours", author="Alexander Kusek", category="Contouring",
-    version="2.3.1", outputNames=["Pullback contours"],
-    description="Fit smooth straight sheath lines over the full Z extent using (-X,-Y,Z). "
+    version="2.7.0", outputNames=["Pullback contours"],
+    description="Correct tracking jitter into one smooth X/Y centerline per Z depth using (-X,-Y,Z). "
                 "CSV paths: semicolon/newline-separated paths or a folder. "
                 "Creates thin editable voxel contours per file and needle.")
 def run(session: XMimSession, mr_image: XMimImage, csv_paths: String) -> ContourList:

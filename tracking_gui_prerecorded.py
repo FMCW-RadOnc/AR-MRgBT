@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import time
+from datetime import datetime
 from queue import Queue
 from PyQt6.QtWidgets import QApplication, QMainWindow
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -76,6 +77,8 @@ def process_tracking_data(data):
     3) From each projection, get the appropriate "x", "y", or "z" (other values will be zero and should be ignored)
     """
 
+    received_clock = time.perf_counter()
+    received_stamp = datetime.now().astimezone()
     coil_measurements = {}
     for coil in data["coils"]:
         coil_name = coil["name"]
@@ -92,8 +95,9 @@ def process_tracking_data(data):
         y = y_proj["coordinates"]["dcs"]["centerPosition"]["y"]
         z = z_proj["coordinates"]["dcs"]["centerPosition"]["z"]
         coil_measurements[coil_name] = (x, y, z)
-    if coil_measurements:
-        comm.data_signal.emit(coil_measurements)
+    coil_measurements["_pullback_clock"] = received_clock
+    coil_measurements["_pullback_timestamp"] = received_stamp
+    comm.data_signal.emit(coil_measurements)
 
 # Should be analogous to on_message in tracking_gui.py
 def on_message(message):

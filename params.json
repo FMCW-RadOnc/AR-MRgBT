@@ -11,5 +11,18 @@
     "green_threshold_mm" : 5,
     "yellow_threshold_mm" : 10,
     "max_threshold_mm" : 30,
-    "dist_between_rx1_and_needle_tip_mm" : 10
+    "dist_between_rx1_and_needle_tip_mm" : 10,
+    "pullback": {
+        "max_speed_mm_s": 200.0,
+        "max_gap_seconds": 0.5,
+        "expected_coil_separation_mm": null,
+        "coil_separation_tolerance_mm": 2.0,
+        "calibration_samples": 7,
+        "outlier_min_mm": 2.0,
+        "outlier_sigma": 4.5,
+        "outlier_window": 7,
+        "bin_mm": 1.0,
+        "smoothing_mm": 20.0,
+        "output_step_mm": 0.5
+    }
 }

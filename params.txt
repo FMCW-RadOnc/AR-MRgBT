@@ -24,3 +24,25 @@
     * The minimum distance from the target (in mm) to fully fill the axis display.
 - dist_between_rx1_and_needle_tip_mm
     * The physical distance between the RX1 core and the tip of the needle (in mm)
+
+Pullback settings (the nested "pullback" object, separate from the display filters):
+- max_speed_mm_s (200)
+    * Maximum tip speed relative to the previous accepted raw frame. Faster jumps are rejected; a long gap resets the reference.
+- max_gap_seconds (0.5)
+    * Maximum elapsed time between accepted frames in one section. Longer gaps and needle switches start separate fitted sections; MIM does not join them.
+- expected_coil_separation_mm (null)
+    * Measured rigid RX1/RX2 spacing. Null learns the median of the first calibration_samples otherwise valid frames per needle. This inferred baseline cannot detect a consistent tracking bias. Set a known physical spacing when available.
+- coil_separation_tolerance_mm (2)
+    * Maximum absolute departure from the measured or inferred separation. This assumes the coil spacing is rigid.
+- calibration_samples (7)
+    * Number of frame separations for automatic baseline calibration; integer >= 3. Bootstrap frames are rechecked on stop. Shorter recordings cannot establish an automatic baseline.
+- outlier_min_mm (2), outlier_sigma (4.5), outlier_window (7)
+    * Reject a middle tip sample if its deviation from time-weighted neighbor interpolation exceeds max(outlier_min_mm, outlier_sigma * 1.4826 * MAD). MAD uses the last outlier_window accepted interpolation residuals. The window must be an integer >= 3. Large true direction changes can also trigger this gate.
+- bin_mm (1)
+    * Z-depth bin width for coordinate medians, reducing pause-related weighting.
+- smoothing_mm (20)
+    * Spatial spline smoothing length, capped at one fifth of the section's Z extent. Larger values suppress more small bends; they cannot recover missing geometry.
+- output_step_mm (0.5)
+    * Maximum physical arc-length interval between modeled output points. All intervals in a section have equal arc length; a finer interval does not add measured information.
+
+All numeric pullback settings must be positive and finite. Defaults are starting values for phantom testing, not validated clinical tolerances.

@@ -3,6 +3,8 @@ import ssl
 import json
 import requests
 import threading
+import time
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -115,6 +117,8 @@ def process_tracking_data(data):
     3) From each projection, get the appropriate "x", "y", or "z" (other values will be zero and should be ignored)
     """
 
+    received_clock = time.perf_counter()
+    received_stamp = datetime.now().astimezone()
     coil_measurements = {}
     for coil in data["coils"]:
         coil_name = coil["name"]
@@ -132,8 +136,10 @@ def process_tracking_data(data):
         z = z_proj["coordinates"]["dcs"]["centerPosition"]["z"]
         print(x,y,z, coil_name)
         coil_measurements[coil_name] = (x, y, z)
-    if coil_measurements:
-        comm.data_signal.emit(coil_measurements)
+    # Capture receipt timing before Qt queues the frame for the HUD thread.
+    coil_measurements["_pullback_clock"] = received_clock
+    coil_measurements["_pullback_timestamp"] = received_stamp
+    comm.data_signal.emit(coil_measurements)
 
 
 def on_message(ws, message):
