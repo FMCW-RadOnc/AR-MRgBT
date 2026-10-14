@@ -56,9 +56,12 @@ import csv
 import threading
 from kalman_filter import KalmanFilter
 from one_euro_filter import OneEuroFilter
-from pullback_recorder import PullbackRecorder, PullbackSettings, calculate_tracker_tip
+from dataclasses import dataclass, fields
+from pathlib import Path
+import time
+from pythonPullbackPoints.src.pullback_core import group_measurements, reject_motion_outliers
 from display_median import DisplayMedianBuffer
-from datetime import datetime
+from datetime import datetime, timedelta
 import statistics
 import json
 
@@ -85,6 +88,209 @@ PULLBACK_OUTPUT_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "MIMData",
 )
+
+
+def calculate_tracker_tip(rx1_xyz, rx2_xyz, tip_offset_mm):
+    try:
+        rx1, rx2 = tuple(map(float, rx1_xyz)), tuple(map(float, rx2_xyz))
+        offset = float(tip_offset_mm)
+        if len(rx1) != 3 or len(rx2) != 3 or not all(math.isfinite(v) for v in (*rx1, *rx2, offset)):
+            return None, math.nan
+        separation = math.dist(rx1, rx2)
+        if not math.isfinite(separation) or separation <= 1e-9:
+            return None, separation
+        tip = tuple(a + offset * (a - b) / separation for a, b in zip(rx1, rx2))
+        return (tip if all(map(math.isfinite, tip)) else None), separation
+    except (TypeError, ValueError, OverflowError):
+        return None, math.nan
+
+
+@dataclass(frozen=True)
+class PullbackSettings:
+    max_speed_mm_s: float = 200.0
+    max_gap_seconds: float = 0.5
+    expected_coil_separation_mm: float | None = None
+    coil_separation_tolerance_mm: float = 2.0
+    calibration_samples: int = 7
+    outlier_min_mm: float = 2.0
+    outlier_sigma: float = 4.5
+    outlier_window: int = 5
+    group_samples: int = 4
+    max_group_span_mm: float = 10.0
+
+    def __post_init__(self):
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if field.name == "expected_coil_separation_mm" and value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError("pullback {} must be positive and finite".format(field.name))
+        for key in ("calibration_samples", "outlier_window", "group_samples"):
+            if not isinstance(getattr(self, key), int) or getattr(self, key) < 3:
+                raise ValueError("pullback {} must be an integer >= 3".format(key))
+
+
+class PullbackRecorder:
+    """Keep acquisition frames in memory and export reduced, robust groups only."""
+    HEADER = ["Needle", "Timestamp", "X Tracker (mm)", "Y Tracker (mm)", "Z Tracker (mm)",
+              "Path Type", "Segment", "Sample Kind", "Samples Used"]
+
+    def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0, settings=None):
+        self.output_dir = Path(output_dir).resolve()
+        self.tip_offset_mm = float(tip_offset_mm)
+        if not math.isfinite(self.tip_offset_mm) or self.tip_offset_mm < 0:
+            raise ValueError("tip_offset_mm must be nonnegative and finite")
+        self.settings = settings if isinstance(settings, PullbackSettings) else PullbackSettings(**(settings or {}))
+        self.path = self.cleaned_path = None
+        self.cleaned_paths = []
+        self._recording = False
+
+    @property
+    def is_recording(self):
+        return self._recording
+
+    def start(self, timestamp=None):
+        if self.is_recording:
+            return self.path
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Needle names arrive with the frames; choose filenames at export.
+        self.path = self.cleaned_path = None
+        self.cleaned_paths = []
+        self._streams, self._calibration = [], {}
+        self._active = self._last_clock = None
+        self._start_clock = time.perf_counter()
+        self._recording = True
+        return self.path
+
+    def write_frame(self, coil_measurements, needle_name, timestamp=None, monotonic_seconds=None):
+        if not self.is_recording:
+            return False
+        try:
+            clock = time.perf_counter() if monotonic_seconds is None else float(monotonic_seconds)
+        except (TypeError, ValueError, OverflowError):
+            return False
+        if not math.isfinite(clock) or (self._last_clock is not None and clock <= self._last_clock):
+            return False
+        if self._last_clock is None and monotonic_seconds is not None:
+            self._start_clock = clock
+        self._last_clock = clock
+        elapsed = clock - self._start_clock
+        needle = str(needle_name or "").strip()
+        if self._active and self._active["needle"] != needle:
+            self._active = None
+        if not needle:
+            return False
+        try:
+            tip, separation = calculate_tracker_tip(coil_measurements["RX1"], coil_measurements["RX2"], self.tip_offset_mm)
+        except (KeyError, TypeError):
+            return False
+        if tip is None:
+            return False
+        calibration = self._calibration.setdefault(needle, [])
+        expected = self.settings.expected_coil_separation_mm
+        if expected is None and len(calibration) >= self.settings.calibration_samples:
+            expected = statistics.median(calibration)
+        if expected is not None and abs(separation - expected) > self.settings.coil_separation_tolerance_mm:
+            return False
+        previous = self._active["records"][-1] if self._active and self._active["records"] else None
+        new_section = previous is None or elapsed - previous["elapsed"] > self.settings.max_gap_seconds
+        if not new_section and math.dist(previous["tip"], tip) / (elapsed - previous["elapsed"]) > self.settings.max_speed_mm_s:
+            return False
+        if len(calibration) < self.settings.calibration_samples:
+            calibration.append(separation)
+        record = {"elapsed": elapsed, "tip": tip, "separation": separation,
+                  "timestamp": timestamp or datetime.now().astimezone()}
+        if new_section:
+            self._active = {"needle": needle, "records": []}
+            self._streams.append(self._active)
+        self._active["records"].append(record)
+        return True
+
+    def _groups(self):
+        segment = 0
+        for stream in self._streams:
+            needle = stream["needle"]
+            expected = self.settings.expected_coil_separation_mm
+            calibration = self._calibration[needle]
+            if expected is None and len(calibration) >= self.settings.calibration_samples:
+                expected = statistics.median(calibration)
+            parts = []
+            for record in stream["records"]:
+                if expected is not None and abs(record["separation"] - expected) > self.settings.coil_separation_tolerance_mm:
+                    continue
+                if not parts or record["elapsed"] - parts[-1][-1]["elapsed"] > self.settings.max_gap_seconds:
+                    parts.append([])
+                parts[-1].append(record)
+            filtered_parts = []
+            for candidates in parts:
+                retained = reject_motion_outliers([(r["elapsed"], r["tip"]) for r in candidates],
+                                                  window=self.settings.outlier_window,
+                                                  outlier_min_mm=self.settings.outlier_min_mm,
+                                                  outlier_sigma=self.settings.outlier_sigma)
+                times = {t for t, _ in retained}
+                part = [r for r in candidates if r["elapsed"] in times]
+                for record in part:
+                    if not filtered_parts or record["elapsed"] - filtered_parts[-1][-1]["elapsed"] > self.settings.max_gap_seconds:
+                        filtered_parts.append([])
+                    filtered_parts[-1].append(record)
+            for part in filtered_parts:
+                groups = group_measurements([(r["elapsed"], r["tip"]) for r in part],
+                                            group_samples=self.settings.group_samples,
+                                            max_group_span_mm=self.settings.max_group_span_mm,
+                                            outlier_min_mm=self.settings.outlier_min_mm,
+                                            outlier_sigma=self.settings.outlier_sigma)
+                segment += 1
+                for group in groups:
+                    stamp = part[0]["timestamp"] + timedelta(seconds=group["time"] - part[0]["elapsed"])
+                    yield [needle, stamp.strftime("%H:%M:%S.%f")[:-3],
+                           *("{:.12f}".format(v) for v in group["point"]),
+                           "grouped_v1", segment, "robust_group", group["samples_used"]]
+
+    def stop(self):
+        if not self.is_recording:
+            return self.cleaned_path
+        self._recording = False
+        rows = list(self._groups())
+        if not rows:
+            return None
+        by_needle = {}
+        for row in rows:
+            by_needle.setdefault(row[0], []).append(row)
+        destinations, reserved = [], set()
+        for needle, needle_rows in by_needle.items():
+            name = "".join("_" if ord(c) < 32 or c in '<>:"/\\|?*' else c for c in needle)
+            name = name.rstrip(" .")[:180] or "Needle"
+            stem, suffix = name, 2
+            destination = self.output_dir / (stem + "_pullback.csv")
+            while (destination.exists() or Path(str(destination) + ".tmp").exists()
+                   or destination.name.casefold() in reserved):
+                stem = "{}_{}".format(name, suffix)
+                suffix += 1
+                destination = self.output_dir / (stem + "_pullback.csv")
+            reserved.add(destination.name.casefold())
+            destinations.append((destination, needle_rows))
+        exported = []
+        try:
+            for destination, needle_rows in destinations:
+                temporary = Path(str(destination) + ".tmp")
+                handle = temporary.open("x", newline="", encoding="utf-8")
+                try:
+                    with handle as f:
+                        writer = csv.writer(f)
+                        writer.writerow(self.HEADER)
+                        writer.writerows(needle_rows)
+                    os.replace(temporary, destination)
+                finally:
+                    if temporary.exists():
+                        temporary.unlink()
+                exported.append(destination)
+        except Exception:
+            for destination in exported:
+                destination.unlink()
+            raise
+        self.cleaned_paths = [str(destination) for destination in exported]
+        self.path = self.cleaned_path = self.cleaned_paths[0]
+        return self.cleaned_path
 
 
 class CoilCoordinateLogger:
@@ -778,7 +984,7 @@ class TrackingGUIWindow(QMainWindow):
                 print(message)
         finally:
             self._set_pullback_button_state(False)
-        result = self.pullback_recorder.cleaned_path or "No valid centerline exported"
+        result = "\n".join(self.pullback_recorder.cleaned_paths) or "No valid centerline exported"
         self.pullback_button.setToolTip(f"{result}\nPress Tab to start or stop pullback recording")
 
     def keyPressEvent(self, event):

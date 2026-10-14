@@ -13,6 +13,7 @@ _core = importlib.util.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core)
 read_paths = _core.read_paths
 fit_sheath_curve = _core.fit_sheath_curve
+curve_through_groups = _core.curve_through_groups
 interpolate = _core.interpolate
 connected_cells = _core.connected_cells
 
@@ -34,7 +35,7 @@ def import_contours(session, mr_image, csv_paths):
     image_dims = list(mr_image.getSpace().getDataDims())
     filtered_paths = []
     total_skipped = 0
-    for source, needle, segments, prepared in paths:
+    for source, needle, segments, path_type in paths:
         retained = []
         skipped = 0
         for segment in segments:
@@ -56,12 +57,15 @@ def import_contours(session, mr_image, csv_paths):
         session.createLogger().info("{} / {}: retained {} points; excluded {} outside MR.".format(
             source, needle, sum(len(segment) for segment in retained), skipped))
         if retained:
-            # Acquisition already fitted these sections. Preserve their shape
-            # and gap boundaries rather than applying a second strong fit.
-            corrected = retained if prepared else [fit_sheath_curve(retained)]
+            if path_type == "grouped_v1":
+                corrected = [curve_through_groups(section) for section in retained]
+            elif path_type == "centerline_v1":
+                corrected = retained
+            else:
+                corrected = [fit_sheath_curve(retained)]
             filtered_paths.append((source, needle, corrected))
-            if prepared:
-                session.createLogger().info("{} / {}: prepared centerline; no additional smoothing.".format(source, needle))
+            if path_type:
+                session.createLogger().info("{} / {}: {}; sections preserved, no global refit.".format(source, needle, path_type))
     paths = filtered_paths
     existing = {str(c.getInfo().getName()) for c in mr_image.getContours()}
     existing.update(str(c.getInfo().getName()) for c in mr_image.getPointOverlays())
@@ -108,8 +112,8 @@ def import_contours(session, mr_image, csv_paths):
         for contour in reversed(created):
             contour.delete()
         raise
-    session.createLogger().info("Version 2.7.0: created {} sheath centerline contours; "
-                               "raw inputs use a robust cubic spline; prepared centerlines retain their sections; "
+    session.createLogger().info("Version 2.8.0: created {} sheath centerline contours; "
+                               "grouped anchors use shape-preserving interpolation; legacy inputs retain their behavior; "
                                "excluded {} source points outside MR and {} contour-grid samples. "
                                "DICOM=(-X,-Y,Z), no target offset.".format(
                                    len(created), total_skipped, skipped_grid_samples))
@@ -118,8 +122,8 @@ def import_contours(session, mr_image, csv_paths):
 
 @mim_extension_entrypoint(
     name="Import Pullback Contours", author="Alexander Kusek", category="Contouring",
-    version="2.7.0", outputNames=["Pullback contours"],
-    description="Correct tracking jitter into one smooth X/Y centerline per Z depth using (-X,-Y,Z). "
+    version="2.8.0", outputNames=["Pullback contours"],
+    description="Draw smooth contours through grouped pullback anchors using (-X,-Y,Z). "
                 "CSV paths: semicolon/newline-separated paths or a folder. "
                 "Creates thin editable voxel contours per file and needle.")
 def run(session: XMimSession, mr_image: XMimImage, csv_paths: String) -> ContourList:

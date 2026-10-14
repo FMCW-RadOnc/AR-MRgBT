@@ -36,13 +36,13 @@ Pullback settings (the nested "pullback" object, separate from the display filte
     * Maximum absolute departure from the measured or inferred separation. This assumes the coil spacing is rigid.
 - calibration_samples (7)
     * Number of frame separations for automatic baseline calibration; integer >= 3. Bootstrap frames are rechecked on stop. Shorter recordings cannot establish an automatic baseline.
-- outlier_min_mm (2), outlier_sigma (4.5), outlier_window (7)
-    * Reject a middle tip sample if its deviation from time-weighted neighbor interpolation exceeds max(outlier_min_mm, outlier_sigma * 1.4826 * MAD). MAD uses the last outlier_window accepted interpolation residuals. The window must be an integer >= 3. Large true direction changes can also trigger this gate.
-- bin_mm (1)
-    * Z-depth bin width for coordinate medians, reducing pause-related weighting.
-- smoothing_mm (20)
-    * Spatial spline smoothing length, capped at one fifth of the section's Z extent. Larger values suppress more small bends; they cannot recover missing geometry.
-- output_step_mm (0.5)
-    * Maximum physical arc-length interval between modeled output points. All intervals in a section have equal arc length; a finer interval does not add measured information.
+- outlier_min_mm (2), outlier_sigma (4.5), outlier_window (5)
+    * Before grouping, each frame is compared with a median-based linear motion model in an outlier_window-sized sliding neighborhood. The residual cutoff is max(outlier_min_mm, median(residuals) + outlier_sigma * 1.4826 * MAD). Each output group repeats this robust check before averaging its retained measurements. Real bends can also exceed the motion-model tolerance. Window must be an integer >= 3.
+- group_samples (4)
+    * Maximum consecutive accepted readings per representative coordinate; integer >= 3. Four samples at 0.11-second intervals give an output cadence near 0.44 seconds, with a 0.33-second first-to-last sample span. Groups can contain fewer readings due to travel limits, gaps, or stopping. Groups with fewer than three readings have insufficient data to independently detect an outlier.
+- max_group_span_mm (10)
+    * Maximum accumulated physical travel inside a group. The group closes before accepting a frame that would exceed it, limiting the amount of a bend replaced by one averaged anchor. Adjacent single frames farther apart than this limit remain separate; the filter cannot create missing measured information. Start/exit coordinates use the retained endpoint timestamps, with overlapping support for a short exit group.
+
+CSV points are reduced group estimates. The extension interpolates between them only when drawing the contour; there is no CSV resampling interval. This filter cannot place a path at the MR-visible sheath centre without image information or an alignment reference.
 
 All numeric pullback settings must be positive and finite. Defaults are starting values for phantom testing, not validated clinical tolerances.

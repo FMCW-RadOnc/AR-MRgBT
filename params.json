@@ -20,9 +20,8 @@
         "calibration_samples": 7,
         "outlier_min_mm": 2.0,
         "outlier_sigma": 4.5,
-        "outlier_window": 7,
-        "bin_mm": 1.0,
-        "smoothing_mm": 20.0,
-        "output_step_mm": 0.5
+        "outlier_window": 5,
+        "group_samples": 4,
+        "max_group_span_mm": 10.0
     }
 }

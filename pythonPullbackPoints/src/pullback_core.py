@@ -74,7 +74,7 @@ def to_dicom(target, offset):
 
 
 def read_paths(csv_paths, include_metadata=False):
-    """Load file/needle samples, marking acquisition gaps for later curve fitting."""
+    """Load file/needle sections. Metadata adds the path-type string as item four."""
     from pathlib import Path
     paths = []
     for value in str(csv_paths).replace(";", "\n").splitlines():
@@ -90,7 +90,7 @@ def read_paths(csv_paths, include_metadata=False):
     for path in paths:
         groups = {}
         active = None
-        prepared = None
+        path_type = None
         seen_segments = set()
         with path.open(newline="", encoding="utf-8-sig") as stream:
             reader = csv.DictReader(stream)
@@ -110,29 +110,28 @@ def read_paths(csv_paths, include_metadata=False):
                     raise ValueError("Missing needle name at {}:{}".format(path, line))
                 segments = groups.setdefault(needle, [])
                 kind = row.get("Path Type", "").strip()
-                if kind not in ("", "centerline_v1"):
+                if kind not in ("", "centerline_v1", "grouped_v1"):
                     raise ValueError("Unknown Path Type at {}:{}".format(path, line))
-                is_prepared = kind == "centerline_v1"
-                if prepared is not None and prepared != is_prepared:
-                    raise ValueError("Cannot mix raw and prepared points in {}".format(path))
-                prepared = is_prepared
+                if path_type is not None and path_type != kind:
+                    raise ValueError("Cannot mix path types in {}".format(path))
+                path_type = kind
                 segment_id = row.get("Segment", "").strip()
-                if prepared and not segment_id:
+                if kind and not segment_id:
                     raise ValueError("Prepared centerline requires Segment at {}:{}".format(path, line))
-                key = (needle, segment_id) if prepared else needle
+                key = (needle, segment_id) if kind else needle
                 values = [row[c].strip() for c in TRACKER_COLUMNS]
                 if not all(values):
-                    if prepared:
+                    if kind:
                         raise ValueError("Prepared centerline has missing coordinates")
                     active = None
                     continue
                 x, y, z = xyz(values, "{} row {}".format(path.name, line))
                 if active != key:
-                    if prepared and key in seen_segments:
+                    if kind and key in seen_segments:
                         raise ValueError("Prepared Segment must be contiguous")
                     seen_segments.add(key)
                     segments.append([])
-                elif prepared and z <= segments[-1][-1][2]:
+                elif kind == "centerline_v1" and z <= segments[-1][-1][2]:
                     raise ValueError("Prepared centerline depths must strictly increase within Segment")
                 segments[-1].append((-x, -y, z))
                 active = key
@@ -141,8 +140,173 @@ def read_paths(csv_paths, include_metadata=False):
             if not segments:
                 raise ValueError("No valid points for {} in {}".format(needle, path))
             item = (path.stem, needle, segments)
-            result.append(item + (bool(prepared),) if include_metadata else item)
+            result.append(item + (path_type or "",) if include_metadata else item)
     return result
+
+
+def estimate_group(samples, outlier_min_mm=2.0, outlier_sigma=4.5):
+    """Median-based motion fit rejects spikes; mean of inliers estimates position.
+
+    Samples are (monotonic seconds, XYZ). Testing residuals against the moving
+    trajectory avoids treating normal withdrawal progress as noise. Endpoints
+    are fitted only at retained timestamps, never extrapolated beyond support.
+    """
+    if not samples:
+        raise ValueError("Cannot estimate an empty group")
+    if not all(math.isfinite(v) and v > 0 for v in (outlier_min_mm, outlier_sigma)):
+        raise ValueError("Group outlier thresholds must be positive and finite")
+    samples = [(float(t), xyz(p, "Group coordinate")) for t, p in samples]
+    if any(not math.isfinite(t) for t, _ in samples) or any(b[0] <= a[0] for a, b in zip(samples, samples[1:])):
+        raise ValueError("Group times must be finite and strictly increasing")
+    reference = samples[len(samples) // 2][0]
+    slopes = [median((b[1][axis] - a[1][axis]) / (b[0] - a[0])
+                     for i, a in enumerate(samples) for b in samples[i + 1:])
+              if len(samples) > 1 else 0.0 for axis in range(3)]
+    intercepts = [median(p[axis] - slopes[axis] * (t - reference) for t, p in samples)
+                  for axis in range(3)]
+    residuals = [math.dist(p, tuple(intercepts[i] + slopes[i] * (t - reference) for i in range(3)))
+                 for t, p in samples]
+    center = median(residuals)
+    scale = 1.4826 * median(abs(r - center) for r in residuals)
+    cutoff = max(outlier_min_mm, center + outlier_sigma * scale)
+    inliers = [sample for sample, residual in zip(samples, residuals) if residual <= cutoff]
+    mean_time = math.fsum(t for t, _ in inliers) / len(inliers)
+    mean_point = tuple(math.fsum(p[i] for _, p in inliers) / len(inliers) for i in range(3))
+    variance = math.fsum((t - mean_time)**2 for t, _ in inliers)
+    fitted_slopes = [math.fsum((t - mean_time) * (p[i] - mean_point[i]) for t, p in inliers) / variance
+                     if variance else 0.0 for i in range(3)]
+    def at(t):
+        return tuple(mean_point[i] + fitted_slopes[i] * (t - mean_time) for i in range(3))
+    return {"time": mean_time, "point": mean_point, "samples_used": len(inliers),
+            "inlier_times": [t for t, _ in inliers],
+            "first": (inliers[0][0], at(inliers[0][0])),
+            "last": (inliers[-1][0], at(inliers[-1][0]))}
+
+
+def reject_motion_outliers(samples, window=5, outlier_min_mm=2.0, outlier_sigma=4.5):
+    """Detrended sliding-window rejection before spatial grouping.
+
+    Check each frame against a majority of neighbors. A newest spike cannot
+    trigger cascading rejection of earlier good points, as a three-frame gate
+    can. Use the first/last full windows at endpoints for equal protection.
+    """
+    if not isinstance(window, int) or isinstance(window, bool) or window < 3:
+        raise ValueError("Outlier window must be an integer >= 3")
+    if not samples:
+        return []
+    size = min(window, len(samples))
+    retained, windows = [], {}
+    for i, sample in enumerate(samples):
+        start = max(0, min(i - size // 2, len(samples) - size))
+        if start not in windows:
+            estimate = estimate_group(samples[start:start + size], outlier_min_mm, outlier_sigma)
+            windows[start] = set(estimate["inlier_times"])
+        if sample[0] in windows[start]:
+            retained.append(sample)
+    return retained
+
+
+def group_measurements(samples, group_samples=4, max_group_span_mm=10.0,
+                       outlier_min_mm=2.0, outlier_sigma=4.5):
+    """Reduce accepted frames to group estimates without dense CSV resampling.
+
+    The span is the group's accumulated physical travel, not distance to its
+    starting point. The first/last groups represent supported endpoints instead
+    of their midpoints, retaining full extent without extra interior anchors.
+    """
+    if not isinstance(group_samples, int) or isinstance(group_samples, bool) or group_samples < 3:
+        raise ValueError("Group sample count must be an integer >= 3")
+    if not math.isfinite(max_group_span_mm) or max_group_span_mm <= 0:
+        raise ValueError("Group span must be positive and finite")
+    samples = list(samples)
+    groups, group, travel = [], [], 0.0
+    for sample in samples:
+        distance = math.dist(group[-1][1], sample[1]) if group else 0.0
+        if group and (len(group) >= group_samples or travel + distance > max_group_span_mm):
+            groups.append(group)
+            group, travel, distance = [], 0.0, 0.0
+        group.append(sample)
+        travel += distance
+    if group:
+        groups.append(group)
+    estimates = [estimate_group(g, outlier_min_mm, outlier_sigma) for g in groups]
+    if not estimates:
+        return []
+    if len(estimates) == 1:
+        estimate = estimates[0]
+        if estimate["samples_used"] > 1 and math.dist(estimate["first"][1], estimate["last"][1]) > 1e-6:
+            return [dict(estimate, time=t, point=p) for t, p in (estimate["first"], estimate["last"])]
+    else:
+        # A short final remainder must not leave the exit coordinate depending
+        # on a single jittery frame. Overlap preceding support only for this
+        # endpoint, respecting the same sample/travel limits and row count.
+        support, travel = [], 0.0
+        for sample in reversed(samples):
+            distance = math.dist(support[-1][1], sample[1]) if support else 0.0
+            if support and (len(support) >= group_samples or travel + distance > max_group_span_mm):
+                break
+            support.append(sample)
+            travel += distance
+        estimates[-1] = estimate_group(list(reversed(support)), outlier_min_mm, outlier_sigma)
+    estimates[0]["time"], estimates[0]["point"] = estimates[0]["first"]
+    estimates[-1]["time"], estimates[-1]["point"] = estimates[-1]["last"]
+    return estimates
+
+
+def _pchip_slopes(depths, values):
+    lengths = [b - a for a, b in zip(depths, depths[1:])]
+    secants = [(b - a) / h for a, b, h in zip(values, values[1:], lengths)]
+    if len(values) == 2:
+        return [secants[0], secants[0]]
+    derivatives = [0.0] * len(values)
+    for i in range(1, len(values) - 1):
+        a, b = secants[i - 1:i + 1]
+        if a * b > 0:
+            w1, w2 = 2 * lengths[i] + lengths[i - 1], lengths[i] + 2 * lengths[i - 1]
+            derivatives[i] = (w1 + w2) / (w1 / a + w2 / b)
+    def endpoint(h0, h1, d0, d1):
+        slope = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1)
+        if slope * d0 <= 0:
+            return 0.0
+        if d0 * d1 <= 0 and abs(slope) > 3 * abs(d0):
+            return 3 * d0
+        return slope
+    derivatives[0] = endpoint(lengths[0], lengths[1], secants[0], secants[1])
+    derivatives[-1] = endpoint(lengths[-1], lengths[-2], secants[-1], secants[-2])
+    return derivatives
+
+
+def curve_through_groups(points, step_mm=0.25):
+    """Shape-preserving X(Z), Y(Z) interpolation for contour drawing only.
+
+    Pass through grouped anchors without a second global smoothing fit. Exact
+    duplicate depths collapse to one coordinate median; sections are handled
+    separately by the caller. No sampled points are written back into the CSV.
+    """
+    if not math.isfinite(step_mm) or step_mm <= 0:
+        raise ValueError("Curve step must be positive and finite")
+    by_depth = {}
+    for p in points:
+        p = xyz(p, "Grouped anchor")
+        by_depth.setdefault(p[2], []).append(p)
+    if not by_depth:
+        raise ValueError("No grouped anchors")
+    anchors = [tuple(median(p[i] for p in by_depth[z]) for i in range(3)) for z in sorted(by_depth)]
+    if len(anchors) == 1:
+        return anchors
+    depths = [p[2] for p in anchors]
+    slopes = [_pchip_slopes(depths, [p[i] for p in anchors]) for i in range(2)]
+    curve = [anchors[0]]
+    for j, (a, b) in enumerate(zip(anchors, anchors[1:])):
+        h = b[2] - a[2]
+        count = max(1, math.ceil(h / step_mm))
+        for k in range(1, count):
+            t = k / count
+            h00, h10, h01, h11 = 2*t**3 - 3*t*t + 1, t**3 - 2*t*t + t, -2*t**3 + 3*t*t, t**3 - t*t
+            curve.append(tuple(h00*a[i] + h10*h*slopes[i][j] + h01*b[i] + h11*h*slopes[i][j + 1]
+                               for i in range(2)) + (a[2] + h*t,))
+        curve.append(b)
+    return curve
 
 
 def _spline_basis(knots, position):

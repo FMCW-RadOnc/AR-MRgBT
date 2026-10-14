@@ -1,4 +1,4 @@
-# Pullback contours for MIM — version 2.7.0
+# Pullback contours for MIM — version 2.8.0
 
 Import **dist/pythonPullbackPoints.zip** using MIM's Extensions import interface.
 The package filename is retained from version 1; the entry point is now
@@ -6,11 +6,14 @@ The package filename is retained from version 1; the entry point is now
 through MIM's extension manager to avoid running the obsolete point importer.
 MIM's Python extension runtime must be configured.
 
-Version 2.7.0 recognizes the recorder's prepared `centerline_v1` CSVs. They are
-imported without a second smoothing pass, and their separate `Segment` sections
-are preserved. Legacy raw recordings retain the global robust X(Z), Y(Z) spline
-fit introduced in 2.6.0. The helper is loaded directly from the current extension
-package so a running MIM session does not reuse an older copy.
+Version 2.8.0 recognizes reduced `grouped_v1` CSVs. The recorder produces one
+robust coordinate per group of up to four measurements, capped at 10 mm of
+travel. MIM draws a smooth shape-preserving cubic curve through those anchors;
+the dense points used to paint contour voxels are never written to the CSV.
+Separate `Segment` sections are preserved. Existing `centerline_v1` CSVs retain
+their no-refit behavior, and unmarked raw CSVs retain the robust global spline
+introduced in 2.6.0. The helper is loaded from this extension package so a running
+MIM session does not reuse an older copy.
 
 ## Run
 
@@ -31,11 +34,15 @@ imports can show multiple locations on one slice even when each fit is a single 
 The extension reads `Needle`, `X Tracker (mm)`, `Y Tracker (mm)`, and
 `Z Tracker (mm)` from each CSV. It uses the absolute calculated **tip** coordinates,
 not individual coil coordinates or the distance-to-target columns. Select the
-new recorder's `_cleaned.csv` file in `MIMData`, its sole output. Prepared files have
-`Path Type=centerline_v1` and a required `Segment` identifier. Their timestamps
-are blank because their points are modeled estimates. Points must be finite,
-strictly increasing in Z within each contiguous section. Mixed raw/prepared rows
-or unknown markers fail validation. Earlier pullbacks with additional distance
+new recorder's `<Needle>_pullback.csv` files in `MIMData`, one per needle.
+For example, `DW02_pullback.csv`; repeats use `DW02_2_pullback.csv` to preserve
+existing files. Earlier `_cleaned.csv` recordings remain supported. Grouped files
+have `Path Type=grouped_v1`, a required `Segment` identifier, and `Samples Used`
+for each estimate. Their timestamps identify the estimated position time.
+Grouped points must be finite and each section contiguous. The extension sorts
+each section by Z and combines exact duplicate depths with coordinate medians.
+Older `centerline_v1` files still require strictly increasing Z within a section.
+Mixed path types or unknown markers fail validation. Earlier pullbacks with additional distance
 columns are also accepted; those extra columns are ignored. Folder imports are
 nonrecursive and import every CSV in that folder, including any legacy raw files;
 select only the intended cleaned files to avoid displaying duplicate paths.
@@ -85,20 +92,35 @@ or two-depth recordings use straight-line correction because curvature cannot be
 estimated reliably. Keep distinct withdrawals in separate files or use distinct
 needle names.
 
-For **prepared centerlines**, the acquisition pipeline has already performed
-frame validation, temporal spike rejection and gentle symmetric averaging,
-spatial-bin medians, robust spline fitting, and uniform physical resampling.
-The importer only maps and rasterizes these curves. It does not refit or join
-sections, and out-of-volume points split a prepared section rather than being
-bridged. One file/needle contour can therefore contain multiple disconnected
-sections where there was a recording gap or needle switch. Its extent follows
-the accepted, filtered acquisition data, not rejected raw endpoint spikes.
+For **grouped coordinates**, acquisition validates geometry, timing, coil
+separation, and speed. On stop, a sliding median-based motion fit rejects spikes,
+then nonoverlapping groups of up to four readings are reduced by rejecting
+motion-model residual outliers and averaging the inliers. The 10 mm travel cap
+shortens groups during fast withdrawal to avoid averaging across a broad bend.
+The first/last groups provide locally fitted endpoints at retained timestamps;
+a short final remainder may overlap preceding readings for a stable exit estimate.
+A single moving group can provide two endpoints rather than one midpoint.
+
+The extension interpolates X(Z) and Y(Z) through these anchors with PCHIP-style
+shape-preserving cubic Hermite interpolation: continuous first derivative,
+no additional global smoothing, and no coordinate overshoot between adjacent
+anchors. It samples the curve only for contour rasterization. Grouped anchors
+remain estimates; small true bends can be lost through averaging, and curvature
+between sparse anchors cannot be measured. The CSV itself remains unchanged.
+
+For **older prepared centerlines**, the extension directly maps and rasterizes
+the supplied curve without refitting. For both marked formats, sections are not
+joined, and out-of-volume source points split sections rather than being bridged.
+One file/needle contour may contain disconnected sections at a recording gap or
+needle switch.
 
 This assumes one sheath position per Z depth. A sheath that doubles back in Z
 cannot be represented by this fit. Smoothing may soften small true bends; sustained
 tracking errors can still distort the centerline. Sparse samples cannot recover
 an unmeasured bend. The importer uses tracker coordinates; it does not segment
-the black sheath or locate its ends from the MR image.
+the black sheath or locate its ends from the MR image. Exact centering on the
+visible plastic sheath requires an image-derived reference or calibrated
+alignment correction; tracking averages alone cannot establish that alignment.
 Malformed/non-finite values fail the import. Every file is parsed and its points
 checked against the actual selected MR volume before creation. Out-of-volume
 points are excluded from a raw-input curve fit and its extent and counted in the log.
@@ -127,7 +149,6 @@ From the repository root:
 
 ```powershell
 .\.venv\Scripts\python.exe pythonPullbackPoints/build.py
-.\.venv\Scripts\python.exe -m unittest test_pullback_recorder
 .\.venv\Scripts\python.exe -m unittest discover -s pythonPullbackPoints -p 'test_*.py'
 ```
 
