@@ -57,7 +57,7 @@ def import_contours(session, mr_image, csv_paths):
         session.createLogger().info("{} / {}: retained {} points; excluded {} outside MR.".format(
             source, needle, sum(len(segment) for segment in retained), skipped))
         if retained:
-            if path_type == "grouped_v1":
+            if path_type in ("grouped_v1", "filtered_v1", "filtered_plain_v1"):
                 corrected = [curve_through_groups(section) for section in retained]
             elif path_type == "centerline_v1":
                 corrected = retained
@@ -112,8 +112,9 @@ def import_contours(session, mr_image, csv_paths):
         for contour in reversed(created):
             contour.delete()
         raise
-    session.createLogger().info("Version 2.8.0: created {} sheath centerline contours; "
-                               "grouped anchors use shape-preserving interpolation; legacy inputs retain their behavior; "
+    session.createLogger().info("Version 2.10.1: created {} sheath centerline contours; "
+                               "filtered original readings and older grouped anchors use shape-preserving interpolation; "
+                               "legacy inputs retain their behavior; "
                                "excluded {} source points outside MR and {} contour-grid samples. "
                                "DICOM=(-X,-Y,Z), no target offset.".format(
                                    len(created), total_skipped, skipped_grid_samples))
@@ -122,8 +123,8 @@ def import_contours(session, mr_image, csv_paths):
 
 @mim_extension_entrypoint(
     name="Import Pullback Contours", author="Alexander Kusek", category="Contouring",
-    version="2.8.0", outputNames=["Pullback contours"],
-    description="Draw smooth contours through grouped pullback anchors using (-X,-Y,Z). "
+    version="2.10.1", outputNames=["Pullback contours"],
+    description="Draw smooth contours through Z-first / XY-filtered original readings using (-X,-Y,Z). "
                 "CSV paths: semicolon/newline-separated paths or a folder. "
                 "Creates thin editable voxel contours per file and needle.")
 def run(session: XMimSession, mr_image: XMimImage, csv_paths: String) -> ContourList:

@@ -25,24 +25,24 @@
 - dist_between_rx1_and_needle_tip_mm
     * The physical distance between the RX1 core and the tip of the needle (in mm)
 
-Pullback settings (the nested "pullback" object, separate from the display filters):
-- max_speed_mm_s (200)
-    * Maximum tip speed relative to the previous accepted raw frame. Faster jumps are rejected; a long gap resets the reference.
+Pullback settings (the nested "pullback" object, separate from display filters):
+- expected_coil_separation_mm (null), coil_separation_tolerance_mm (2), calibration_samples (7)
+    * Validate rigid RX1/RX2 spacing during capture. Null learns the median of the first seven otherwise valid frames; bootstrap readings are rechecked on Stop. A known physical baseline can be configured.
+- neighbors_each_side (3), max_neighbor_time_distance_s (1.5)
+    * Candidate-excluded local Z reference: up to three readings on each side within 1.5 seconds. References cannot cross a needle-switch acquisition block.
+- z_outlier_floor_mm (5), z_outlier_sigma (4.5), minimum_supporting_neighbors (4)
+    * Robust nonincreasing Z/time model. Threshold = max(5 mm, median reference residual + 4.5 * 1.4826 * median absolute deviation of reference residuals). Reject the entire candidate row only when four reference neighbors support the model and the candidate exceeds its threshold. Insufficient reference retains the original row for reversal repair.
+- reversal_radius_rows (3), reversal_radius_seconds (1.5)
+    * Repair Z increases using bounded nearby rows. Prefer the most original rows, then lower local-model error, then time coverage. No distant fixed future boundary and no unbounded expansion. Resolved windows are protected. Z strictly decreases globally per needle; new acquisition blocks cannot erase earlier blocks.
+- neighbor_agreement_mm (2), minimum_spike_excursion_mm (3)
+    * Check X and Y separately after Z selection. Immediate readings before/after an excursion must agree within 2 mm; each candidate must be more than 3 mm beyond both in the same direction. Whole rows are rejected if either axis qualifies.
+- reference_rows_per_side (3), side_reference_tolerance_mm (2), maximum_spike_run (2)
+    * Test isolated one- or two-row excursions. Separate medians of up to three rows on each side must agree within neighbor_agreement_mm; candidates must be more than 2 mm beyond both medians. Different side levels protect sustained transitions. Singleton spikes cannot support rejecting a neighboring block. Decisions use the same unchanged Z-selected coordinates.
+- gross_axis_step_mm (10), maximum_run_gap_seconds (1), minimum_coherent_run (3)
+    * Split X/Y reference runs at a step over 10 mm in either axis or gap over 1 second. Reject runs shorter than three rows. Endpoints of supported runs stay original.
 - max_gap_seconds (0.5)
-    * Maximum elapsed time between accepted frames in one section. Longer gaps and needle switches start separate fitted sections; MIM does not join them.
-- expected_coil_separation_mm (null)
-    * Measured rigid RX1/RX2 spacing. Null learns the median of the first calibration_samples otherwise valid frames per needle. This inferred baseline cannot detect a consistent tracking bias. Set a known physical spacing when available.
-- coil_separation_tolerance_mm (2)
-    * Maximum absolute departure from the measured or inferred separation. This assumes the coil spacing is rigid.
-- calibration_samples (7)
-    * Number of frame separations for automatic baseline calibration; integer >= 3. Bootstrap frames are rechecked on stop. Shorter recordings cannot establish an automatic baseline.
-- outlier_min_mm (2), outlier_sigma (4.5), outlier_window (5)
-    * Before grouping, each frame is compared with a median-based linear motion model in an outlier_window-sized sliding neighborhood. The residual cutoff is max(outlier_min_mm, median(residuals) + outlier_sigma * 1.4826 * MAD). Each output group repeats this robust check before averaging its retained measurements. Real bends can also exceed the motion-model tolerance. Window must be an integer >= 3.
-- group_samples (4)
-    * Maximum consecutive accepted readings per representative coordinate; integer >= 3. Four samples at 0.11-second intervals give an output cadence near 0.44 seconds, with a 0.33-second first-to-last sample span. Groups can contain fewer readings due to travel limits, gaps, or stopping. Groups with fewer than three readings have insufficient data to independently detect an outlier.
-- max_group_span_mm (10)
-    * Maximum accumulated physical travel inside a group. The group closes before accepting a frame that would exceed it, limiting the amount of a bend replaced by one averaged anchor. Adjacent single frames farther apart than this limit remain separate; the filter cannot create missing measured information. Start/exit coordinates use the retained endpoint timestamps, with overlapping support for a short exit group.
+    * Internal diagnostic section threshold in the recorder. This does not break the drawn contour: MIM extension 2.10.1 connects five-column exports across timestamp gaps. Older marked CSVs still retain their explicit sections.
 
-CSV points are reduced group estimates. The extension interpolates between them only when drawing the contour; there is no CSV resampling interval. This filter cannot place a path at the MR-visible sheath centre without image information or an alignment reference.
+Exports contain only Needle, Timestamp and tracker XYZ, with padded spacing. Coordinates and timestamps remain original; there is no grouping, averaging, fitted endpoint or resampling. MIM extension 2.10.1 draws through final anchors without a second rejection pass. The old fixed 2 mm Z consensus, global decreasing-path search, axial speed limit, and depth-based straight-line X/Y check have been replaced.
 
-All numeric pullback settings must be positive and finite. Defaults are starting values for phantom testing, not validated clinical tolerances.
+All numeric pullback settings must be positive and finite. Count settings must be integers. Defaults reproduce the reviewed comparisons; they do not establish alignment to the image or identify the sheath exit. Start and stop capture at the intended withdrawal interval.

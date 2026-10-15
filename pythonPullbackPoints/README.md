@@ -1,4 +1,4 @@
-# Pullback contours for MIM — version 2.8.0
+# Pullback contours for MIM — version 2.10.1
 
 Import **dist/pythonPullbackPoints.zip** using MIM's Extensions import interface.
 The package filename is retained from version 1; the entry point is now
@@ -6,14 +6,7 @@ The package filename is retained from version 1; the entry point is now
 through MIM's extension manager to avoid running the obsolete point importer.
 MIM's Python extension runtime must be configured.
 
-Version 2.8.0 recognizes reduced `grouped_v1` CSVs. The recorder produces one
-robust coordinate per group of up to four measurements, capped at 10 mm of
-travel. MIM draws a smooth shape-preserving cubic curve through those anchors;
-the dense points used to paint contour voxels are never written to the CSV.
-Separate `Segment` sections are preserved. Existing `centerline_v1` CSVs retain
-their no-refit behavior, and unmarked raw CSVs retain the robust global spline
-introduced in 2.6.0. The helper is loaded from this extension package so a running
-MIM session does not reuse an older copy.
+Version 2.10.1 supports five-column exports from the recorder's bounded local Z repair and X/Y excursion filter. Each anchor is an unchanged retained measurement, with its original timestamp. MIM draws a shape-preserving curve through these anchors without a second tracking filter, averaging or global refit. Consecutive retained anchors are connected across timestamp gaps; the old 0.5-second drawing break has been removed. Image-volume exclusions still split drawing sections. Older marked formats retain their explicit sections. The helper is loaded from this package so a running MIM session does not reuse an older copy.
 
 ## Run
 
@@ -36,12 +29,13 @@ The extension reads `Needle`, `X Tracker (mm)`, `Y Tracker (mm)`, and
 not individual coil coordinates or the distance-to-target columns. Select the
 new recorder's `<Needle>_pullback.csv` files in `MIMData`, one per needle.
 For example, `DW02_pullback.csv`; repeats use `DW02_2_pullback.csv` to preserve
-existing files. Earlier `_cleaned.csv` recordings remain supported. Grouped files
-have `Path Type=grouped_v1`, a required `Segment` identifier, and `Samples Used`
-for each estimate. Their timestamps identify the estimated position time.
-Grouped points must be finite and each section contiguous. The extension sorts
-each section by Z and combines exact duplicate depths with coordinate medians.
-Older `centerline_v1` files still require strictly increasing Z within a section.
+existing files. New files contain only `Needle`, `Timestamp`, `X Tracker (mm)`, `Y Tracker (mm)`, and `Z Tracker (mm)`. Coordinates must be finite. Unmarked files whose Z strictly decreases per needle across the complete file are treated as final anchors; no filename pattern or metadata columns are required. The importer cannot infer whether a monotone file was filtered, so use the recorder's exports or the reviewed comparison CSVs. Other unmarked files retain the legacy global fit. A singleton also remains at its original coordinate.
+
+Timestamps do not split five-column paths. Needle changes and missing coordinates within a file still split paths. Use separate recordings for separate withdrawals. Older `filtered_v1` metadata is still validated, including its strict decreasing Z and one-original-sample labels; its explicit sections remain separate.
+
+Earlier `_cleaned.csv` recordings remain supported. Older `grouped_v1` sections
+are sorted by Z and exact duplicate depths are combined using coordinate medians.
+Older `centerline_v1` files require strictly increasing Z within each section.
 Mixed path types or unknown markers fail validation. Earlier pullbacks with additional distance
 columns are also accepted; those extra columns are ignored. Folder imports are
 nonrecursive and import every CSV in that folder, including any legacy raw files;
@@ -68,7 +62,7 @@ an in-bounds path alone cannot prove the correct image series was selected.
 One editable native MIM contour is created **per file and needle name**, named
 `PB_<needle>_<filename>`. Names get suffixes on repeated imports; existing structures
 are preserved. Files are never stitched together even if their needle names match.
-For legacy raw inputs, all valid in-volume samples estimate **one corrected smooth
+For unmarked inputs that do not have strictly decreasing Z, all valid in-volume samples estimate **one corrected smooth
 curved centerline with a single X/Y position at each DICOM Z depth**. Z always
 orders the fit, as in version 2.3.1. Raw points are not individually plotted or
 connected in acquisition order. Duplicate depths and pullback reversals cannot
@@ -92,24 +86,17 @@ or two-depth recordings use straight-line correction because curvature cannot be
 estimated reliably. Keep distinct withdrawals in separate files or use distinct
 needle names.
 
-For **grouped coordinates**, acquisition validates geometry, timing, coil
-separation, and speed. On stop, a sliding median-based motion fit rejects spikes,
-then nonoverlapping groups of up to four readings are reduced by rejecting
-motion-model residual outliers and averaging the inliers. The 10 mm travel cap
-shortens groups during fast withdrawal to avoid averaging across a broad bend.
-The first/last groups provide locally fitted endpoints at retained timestamps;
-a short final remainder may overlap preceding readings for a stable exit estimate.
-A single moving group can provide two endpoints rather than one midpoint.
+For **filtered original readings**, the recorder checks geometry and receipt timing during acquisition, then filters on Stop. Local Z checks use up to three neighbors per side within 1.5 seconds, an adaptive 5 mm minimum residual threshold, and four supporting neighbors. Local reversal repair is bounded to three rows per side and 1.5 seconds; already resolved windows cannot be overridden by later data.
 
-The extension interpolates X(Z) and Y(Z) through these anchors with PCHIP-style
-shape-preserving cubic Hermite interpolation: continuous first derivative,
-no additional global smoothing, and no coordinate overshoot between adjacent
-anchors. It samples the curve only for contour rasterization. Grouped anchors
-remain estimates; small true bends can be lost through averaging, and curvature
-between sparse anchors cannot be measured. The CSV itself remains unchanged.
+X/Y filtering removes isolated one- or two-row excursions that return to a consistent surrounding path. Each axis uses 2 mm before/after agreement, more than 3 mm immediate excursion, and separate side-median support within 2 mm. Sustained transitions remain when the sides disagree. Gross lateral steps over 10 mm or gaps over 1 second split the supporting runs; fewer than three readings is unsupported. Whole rows are removed, with no grouping or averaging. See the main README and `params.txt` for exact rules and configurable defaults. These are the same settings used for the reviewed DW01 (14 readings) and DW02 (32 readings) comparisons.
+
+MIM interpolates X(Z) and Y(Z) through the final anchors with shape-preserving cubic Hermite interpolation and continuous first derivative. Interpolation is only for rasterization: it does not alter or add CSV rows. Timestamp gaps do not break the contour in five-column files. Out-of-volume anchors still split paths, and marked files retain their explicit sections. The importer does not rerun the tracking filter on final anchors.
+
+For **older grouped coordinates**, the same interpolation is applied to the
+supplied group estimates. It does not rerun tracking rejection or global fitting.
 
 For **older prepared centerlines**, the extension directly maps and rasterizes
-the supplied curve without refitting. For both marked formats, sections are not
+the supplied curve without refitting. For all marked formats, sections are not
 joined, and out-of-volume source points split sections rather than being bridged.
 One file/needle contour may contain disconnected sections at a recording gap or
 needle switch.
@@ -163,7 +150,7 @@ curvature at cubic joins, same-Z averaging, reversed recordings, pauses, full
 extent, gap bridging, interpolation, voxel connectivity, bounds validation and
 rollback with a simulated MIM API. The supplied DW02 recording is also tested on
 an oblique anisotropic grid to check one connected spot per axial slice with no
-missing slices. Version 2.6 execution, display and RTSTRUCT export/reload in a live
+missing slices. Version 2.10.1 execution, display and RTSTRUCT export/reload in a live
 MIM session have not been verified here.
 
 Version 2.1 fixes the noxel coordinate-system error by creating DICOM points directly through `XMimPointFactory.createPoint` in both image and contour spaces, then converting them to noxel coordinates. Reimport the rebuilt ZIP to replace version 2.0.

@@ -5,7 +5,7 @@ import sys
 import uuid
 import unittest
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parent
@@ -62,14 +62,35 @@ class CoreTests(unittest.TestCase):
         from base_gui import PullbackRecorder
         recorder = PullbackRecorder(str(self.directory), 10)
         recorder.start()
-        recorder.write_frame({"RX1": (1, 2, 3), "RX2": (1, 2, -7)}, "A")
+        for i in range(7):
+            recorder.write_frame({"RX1": (1, 2, 3-i), "RX2": (1, 2, -7-i)}, "A", monotonic_seconds=i*.11)
         path = recorder.stop()
         from pullback_core import read_paths
-        self.assertEqual(read_paths(path)[0][2], [[(-1, -2, 13)]])
+        self.assertEqual(read_paths(path)[0][2], [[(-1, -2, 13-i) for i in range(7)]])
 
 
 
 class PathTests(CoreTests):
+    def test_filtered_marker_preserves_descending_original_rows_and_quality(self):
+        from pullback_core import read_paths
+        self.csv(TRACKER_COLUMNS + ("Path Type", "Segment", "Sample Kind", "Samples Used"),
+                 [["A", "1", -5, -6, 20, "filtered_v1", 1, "zxy_filtered", 1],
+                  ["A", "2", -9, -6, 15, "filtered_v1", 1, "xy_unchecked", 1],
+                  ["A", "3", -20, -6, 7, "filtered_v1", 2, "zxy_filtered", 1]])
+        item = read_paths(self.path, include_metadata=True)[0]
+        self.assertEqual(item[3], "filtered_v1")
+        self.assertEqual(item[2], [[(5, 6, 20), (9, 6, 15)], [(20, 6, 7)]])
+
+    def test_filtered_backtracking_duplicate_depth_and_fake_averages_fail(self):
+        from pullback_core import read_paths
+        for second_z, second_segment, sample_kind, used in ((20, 1, "zxy_filtered", 1),
+                (21, 2, "zxy_filtered", 1), (15, 1, "robust_group", 1), (15, 1, "zxy_filtered", 4)):
+            self.csv(TRACKER_COLUMNS + ("Path Type", "Segment", "Sample Kind", "Samples Used"),
+                     [["A", "1", -5, -6, 20, "filtered_v1", 1, "zxy_filtered", 1],
+                      ["A", "2", -9, -6, second_z, "filtered_v1", second_segment, sample_kind, used]])
+            with self.assertRaises(ValueError):
+                read_paths(self.path)
+
     def test_prepared_marker_and_segments_are_preserved(self):
         from pullback_core import read_paths
         self.csv(TRACKER_COLUMNS + ("Path Type", "Segment", "Sample Kind"),
@@ -348,7 +369,7 @@ class GroupedMeasurementTests(unittest.TestCase):
             curve_through_groups([])
 
 
-class GroupedRecorderTests(CoreTests):
+class FilteredRecorderTests(CoreTests):
     def setUp(self):
         super().setUp()
         sys.path.insert(0, str(ROOT.parent))
@@ -359,57 +380,66 @@ class GroupedRecorderTests(CoreTests):
     def write(self, tip, t, needle="A", separation=10):
         x, y, z = tip
         return self.recorder.write_frame({"RX1": (x, y, z - 10), "RX2": (x, y, z - 10 - separation)},
-                                         needle, timestamp=datetime(2026, 10, 6, 12), monotonic_seconds=t)
+                                         needle, timestamp=datetime(2026, 10, 6, 12)+timedelta(seconds=t), monotonic_seconds=t)
+
+    def write_run(self, z=20, start=0, needle="A", count=7):
+        for i in range(count):
+            self.write((0, 0, z-i), start+i*.11, needle)
+
+    def read_rows(self, path):
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            reader.fieldnames = [value.strip() for value in reader.fieldnames]
+            return [{key: value.strip() for key, value in row.items()} for row in reader]
 
     def rows(self):
         self.recorder.stop()
-        with open(self.recorder.cleaned_path, newline="") as f:
-            return list(csv.DictReader(f))
+        return self.read_rows(self.recorder.cleaned_path)
 
-    def test_only_reduced_csv_no_raw_report_or_dense_points(self):
+    def test_original_rows_are_preserved_without_averaging_or_resampling(self):
         for i in range(50):
             self.write((5, 6, 100 - i), i * 0.11)
         self.assertEqual(list(self.directory.iterdir()), [])
         rows = self.rows()
         self.assertEqual(Path(self.recorder.cleaned_path).name, "A_pullback.csv")
-        self.assertEqual(len(rows), 13)
+        self.assertEqual(len(rows), 50)
         self.assertEqual(list(self.directory.iterdir()), [Path(self.recorder.cleaned_path)])
-        self.assertTrue(all(r["Path Type"] == "grouped_v1" and r["Timestamp"] and int(r["Samples Used"]) == 4
+        self.assertTrue(all(list(r) == ["Needle", "Timestamp"] + list(TRACKER_COLUMNS) and r["Timestamp"]
                             for r in rows))
+        self.assertEqual([float(r["Z Tracker (mm)"]) for r in rows], [100-i for i in range(50)])
+        self.assertEqual(rows[1]["Timestamp"], "12:00:00.110")
         self.assertEqual((float(rows[0]["Z Tracker (mm)"]), float(rows[-1]["Z Tracker (mm)"])), (100, 51))
 
-    def test_spike_removed_before_travel_cap_is_applied(self):
+    def test_lateral_spike_is_removed_after_full_capture(self):
         for i in range(50):
             self.write((12 if i == 22 else 0, 0, 100 - i), i * 0.11)
         rows = self.rows()
         self.assertTrue(all(abs(float(r["X Tracker (mm)"])) < 1e-9 for r in rows))
-        self.assertLessEqual(len(rows), 13)
+        self.assertEqual(len(rows), 49)
 
-    def test_five_second_two_hundred_mm_pullback_exports_sixteen_anchors(self):
+    def test_fast_supported_pullback_preserves_all_measurements(self):
         for i in range(46):
             self.write((0, 0, 200 - i * 200 / 45), i * 0.11)
         rows = self.rows()
-        self.assertEqual(len(rows), 16)
-        self.assertTrue(all(int(r["Samples Used"]) <= 3 for r in rows))
+        self.assertEqual(len(rows), 46)
+        self.assertTrue(all(len(r) == 5 for r in rows))
         self.assertAlmostEqual(float(rows[0]["Z Tracker (mm)"]), 200)
         self.assertAlmostEqual(float(rows[-1]["Z Tracker (mm)"]), 0)
 
-    def test_gaps_and_needle_switches_never_mix_groups(self):
+    def test_five_column_exports_connect_each_needle_across_time_gaps(self):
         for start, z, needle in ((0, 100, "A"), (2, 80, "A"), (3, 60, "B"), (4, 40, "A")):
             for i in range(6):
                 self.write((0, 0, z - i), start + i * 0.11, needle)
         self.recorder.stop()
         rows = []
         for path in self.recorder.cleaned_paths:
-            with open(path, newline="") as f:
-                needle_rows = list(csv.DictReader(f))
+            needle_rows = self.read_rows(path)
             self.assertEqual(len({r["Needle"] for r in needle_rows}), 1)
             rows.extend(needle_rows)
-        self.assertEqual(len(set(r["Segment"] for r in rows)), 4)
         from pullback_core import read_paths
         paths = read_paths(";".join(self.recorder.cleaned_paths), include_metadata=True)
         self.assertEqual([Path(p).name for p in self.recorder.cleaned_paths], ["A_pullback.csv", "B_pullback.csv"])
-        self.assertEqual([(p[1], len(p[2]), p[3]) for p in paths], [("A", 3, "grouped_v1"), ("B", 1, "grouped_v1")])
+        self.assertEqual([(p[1], len(p[2]), p[3]) for p in paths], [("A", 1, "filtered_plain_v1"), ("B", 1, "filtered_plain_v1")])
 
     def test_calibration_rejects_bad_bootstrap_geometry(self):
         for i in range(12):
@@ -421,19 +451,20 @@ class GroupedRecorderTests(CoreTests):
         self.assertIsNone(self.recorder.stop())
         self.assertEqual(list(self.directory.iterdir()), [])
         self.recorder.start()
-        self.write((0, 0, 20), 0)
+        self.write_run()
         from unittest.mock import patch
         with patch("base_gui.os.replace", side_effect=OSError("export failed")):
             with self.assertRaises(OSError):
                 self.recorder.stop()
         self.assertEqual(list(self.directory.iterdir()), [])
 
-    def test_invalid_geometry_speed_and_timing_are_discarded(self):
+    def test_geometry_and_timing_checked_live_but_motion_decided_on_stop(self):
         self.write((0, 0, 100), 0)
-        self.assertFalse(self.write((100, 0, 99), 0.11))
+        self.assertTrue(self.write((100, 0, 99), 0.11))
         self.assertFalse(self.write((0, 0, 99), 0.11))
         self.assertFalse(self.write((math.nan, 0, 99), 0.22))
-        self.write((0, 0, 97), 0.33)
+        for i in range(3, 14):
+            self.write((0, 0, 100-i), i*.11)
         self.assertTrue(all(abs(float(r["X Tracker (mm)"])) < 1e-8 for r in self.rows()))
 
     def test_shutdown_has_no_dependency_on_report_and_preserves_receipt_time(self):
@@ -453,31 +484,30 @@ class GroupedRecorderTests(CoreTests):
         from base_gui import PullbackSettings
         for v in (0, -1, float("nan"), True):
             with self.assertRaises(ValueError):
-                PullbackSettings(max_group_span_mm=v)
-        self.write((0, 0, 20), 0)
+                PullbackSettings(z_outlier_floor_mm=v)
+        self.write_run()
         first = self.recorder.stop()
         original = Path(first).read_bytes()
         self.assertEqual(self.recorder.stop(), first)
         self.recorder.start(datetime(2026, 10, 6, 12))
-        self.write((0, 0, 40), 0)
+        self.write_run(z=40)
         self.assertNotEqual(self.recorder.stop(), first)
         self.assertEqual(Path(self.recorder.cleaned_path).name, "A_2_pullback.csv")
         self.assertEqual(Path(first).read_bytes(), original)
 
     def test_unsafe_and_colliding_names_stay_in_output_folder(self):
         for i, needle in enumerate(("../DW:02", "DW/02", "DW\\02")):
-            self.write((0, 0, 20), i, needle)
+            self.write_run(start=i*2, needle=needle)
         self.recorder.stop()
         paths = [Path(p) for p in self.recorder.cleaned_paths]
         self.assertTrue(all(p.parent == self.directory.resolve() for p in paths))
         self.assertEqual([p.name for p in paths], [".._DW_02_pullback.csv", "DW_02_pullback.csv", "DW_02_2_pullback.csv"])
         for path, needle in zip(paths, ("../DW:02", "DW/02", "DW\\02")):
-            with path.open(newline="") as f:
-                self.assertEqual(next(csv.DictReader(f))["Needle"], needle)
+            self.assertEqual(self.read_rows(path)[0]["Needle"], needle)
 
     def test_failed_multi_needle_export_rolls_back_new_files(self):
-        self.write((0, 0, 20), 0, "A")
-        self.write((0, 0, 20), 1, "B")
+        self.write_run(needle="A")
+        self.write_run(needle="B", start=2)
         import base_gui
         from unittest.mock import patch
         replace = base_gui.os.replace
@@ -594,6 +624,98 @@ class AdapterTests(CoreTests):
                   ["A", "3", -5, -6, 10, "grouped_v1", 1]])
         self.import_contours(self.session, self.image, str(self.path))
         self.assertEqual(self.voxels, {(5, 6, 7), (5, 6, 10)})
+
+    def test_filtered_contour_uses_original_anchors_without_a_second_filter_or_global_fit(self):
+        from unittest.mock import patch
+        self.csv(TRACKER_COLUMNS + ("Path Type", "Segment", "Sample Kind", "Samples Used"),
+                 [["A", "1", -5, -6, 20, "filtered_v1", 1, "zxy_filtered", 1],
+                  ["A", "2", -9, -6, 15, "filtered_v1", 1, "xy_unchecked", 1],
+                  ["A", "3", -20, -6, 7, "filtered_v1", 2, "zxy_filtered", 1]])
+        original = self.path.read_bytes()
+        with patch("ext.fit_sheath_curve", side_effect=AssertionError("global fit")):
+            self.import_contours(self.session, self.image, str(self.path))
+        self.assertTrue({(5, 6, 20), (9, 6, 15), (20, 6, 7)} <= self.voxels)
+        self.assertFalse(any(7 < z < 15 for x, y, z in self.voxels))
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_five_column_filtered_contour_connects_across_receipt_gaps(self):
+        from unittest.mock import patch
+        self.csv(TRACKER_COLUMNS,
+                 [["A", "14:56:40.000", -5, -6, 20],
+                  ["A", "14:56:40.100", -9, -6, 15],
+                  ["A", "14:56:41.000", -20, -6, 7]])
+        original = self.path.read_bytes()
+        with patch("ext.fit_sheath_curve", side_effect=AssertionError("global fit")):
+            self.import_contours(self.session, self.image, str(self.path))
+        self.assertTrue({(5, 6, 20), (9, 6, 15), (20, 6, 7)} <= self.voxels)
+        self.assertEqual({z for x, y, z in self.voxels}, set(range(7, 21)))
+        start = next(iter(self.voxels))
+        reached, pending = {start}, [start]
+        while pending:
+            voxel = pending.pop()
+            for axis in range(3):
+                for direction in (-1, 1):
+                    neighbor = list(voxel)
+                    neighbor[axis] += direction
+                    neighbor = tuple(neighbor)
+                    if neighbor in self.voxels and neighbor not in reached:
+                        reached.add(neighbor)
+                        pending.append(neighbor)
+        self.assertEqual(reached, self.voxels)
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_five_column_filtered_outside_point_splits_path(self):
+        self.csv(TRACKER_COLUMNS,
+                 [["A", "14:56:40.000", -5, -6, 20],
+                  ["A", "14:56:40.100", -1000, -6, 15],
+                  ["A", "14:56:40.200", -5, -6, 10]])
+        self.import_contours(self.session, self.image, str(self.path))
+        self.assertEqual(self.voxels, {(5, 6, 20), (5, 6, 10)})
+
+    def test_reviewed_five_column_pullbacks_form_connected_paths(self):
+        from pullback_core import read_paths
+        from unittest.mock import patch
+        class ShiftedPoint(Point):
+            def getCoord(self, i):
+                return int(round(self.values[i]+100))
+        self.session.getPointFactory().createPoint.side_effect = lambda *args: ShiftedPoint()
+        self.image.getSpace().getDataDims.return_value = [300, 300, 300]
+        self.contour.getData().getDims.return_value = [300, 300, 300]
+        for needle in ("DW01", "DW02"):
+            source = ROOT.parent / "MIMData" / (needle+"_zlocal_xy_pullback.csv")
+            if not source.is_file():
+                self.skipTest("Optional reviewed five-column recording not available")
+            with self.subTest(needle=needle):
+                original = source.read_bytes()
+                path = read_paths(str(source), include_metadata=True)[0]
+                self.assertEqual(len(path[2]), 1)
+                self.voxels.clear()
+                with patch("ext.fit_sheath_curve", side_effect=AssertionError("global refit")):
+                    self.import_contours(self.session, self.image, str(source))
+                anchors = {tuple(int(round(v+100)) for v in point) for point in path[2][0]}
+                self.assertTrue(anchors <= self.voxels)
+                start = next(iter(self.voxels))
+                reached, pending = {start}, [start]
+                while pending:
+                    voxel = pending.pop()
+                    for axis in range(3):
+                        for direction in (-1, 1):
+                            neighbor = list(voxel)
+                            neighbor[axis] += direction
+                            neighbor = tuple(neighbor)
+                            if neighbor in self.voxels and neighbor not in reached:
+                                reached.add(neighbor)
+                                pending.append(neighbor)
+                self.assertEqual(reached, self.voxels)
+                self.assertEqual(source.read_bytes(), original)
+
+    def test_filtered_outside_point_splits_path(self):
+        self.csv(TRACKER_COLUMNS + ("Path Type", "Segment", "Sample Kind", "Samples Used"),
+                 [["A", "1", -5, -6, 20, "filtered_v1", 1, "zxy_filtered", 1],
+                  ["A", "2", -1000, -6, 15, "filtered_v1", 1, "zxy_filtered", 1],
+                  ["A", "3", -5, -6, 10, "filtered_v1", 1, "xy_unchecked", 1]])
+        self.import_contours(self.session, self.image, str(self.path))
+        self.assertEqual(self.voxels, {(5, 6, 20), (5, 6, 10)})
 
     def test_extension_reload_ignores_cached_old_helper(self):
         import runpy

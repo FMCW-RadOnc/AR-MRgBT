@@ -59,9 +59,9 @@ from one_euro_filter import OneEuroFilter
 from dataclasses import dataclass, fields
 from pathlib import Path
 import time
-from pythonPullbackPoints.src.pullback_core import group_measurements, reject_motion_outliers
+from pythonPullbackPoints.src.pullback_filter import FILTER_DEFAULTS, filter_pullback_samples, validate_filter_settings
 from display_median import DisplayMedianBuffer
-from datetime import datetime, timedelta
+from datetime import datetime
 import statistics
 import json
 
@@ -107,16 +107,25 @@ def calculate_tracker_tip(rx1_xyz, rx2_xyz, tip_offset_mm):
 
 @dataclass(frozen=True)
 class PullbackSettings:
-    max_speed_mm_s: float = 200.0
     max_gap_seconds: float = 0.5
+    neighbors_each_side: int = 3
+    max_neighbor_time_distance_s: float = 1.5
+    z_outlier_floor_mm: float = 5.0
+    z_outlier_sigma: float = 4.5
+    minimum_supporting_neighbors: int = 4
+    reversal_radius_rows: int = 3
+    reversal_radius_seconds: float = 1.5
+    neighbor_agreement_mm: float = 2.0
+    minimum_spike_excursion_mm: float = 3.0
+    side_reference_tolerance_mm: float = 2.0
+    reference_rows_per_side: int = 3
+    maximum_spike_run: int = 2
+    minimum_coherent_run: int = 3
+    gross_axis_step_mm: float = 10.0
+    maximum_run_gap_seconds: float = 1.0
     expected_coil_separation_mm: float | None = None
     coil_separation_tolerance_mm: float = 2.0
     calibration_samples: int = 7
-    outlier_min_mm: float = 2.0
-    outlier_sigma: float = 4.5
-    outlier_window: int = 5
-    group_samples: int = 4
-    max_group_span_mm: float = 10.0
 
     def __post_init__(self):
         for field in fields(self):
@@ -125,15 +134,17 @@ class PullbackSettings:
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError("pullback {} must be positive and finite".format(field.name))
-        for key in ("calibration_samples", "outlier_window", "group_samples"):
-            if not isinstance(getattr(self, key), int) or getattr(self, key) < 3:
-                raise ValueError("pullback {} must be an integer >= 3".format(key))
+        if not isinstance(self.calibration_samples, int) or self.calibration_samples < 3:
+            raise ValueError("pullback calibration_samples must be an integer >= 3")
+        validate_filter_settings(self.filter_options())
+
+    def filter_options(self):
+        return {key: getattr(self, key) for key in FILTER_DEFAULTS}
 
 
 class PullbackRecorder:
-    """Keep acquisition frames in memory and export reduced, robust groups only."""
-    HEADER = ["Needle", "Timestamp", "X Tracker (mm)", "Y Tracker (mm)", "Z Tracker (mm)",
-              "Path Type", "Segment", "Sample Kind", "Samples Used"]
+    """Keep acquisition frames in memory; export unchanged Z/X/Y-filtered rows."""
+    HEADER = ["Needle", "Timestamp", "X Tracker (mm)", "Y Tracker (mm)", "Z Tracker (mm)"]
 
     def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0, settings=None):
         self.output_dir = Path(output_dir).resolve()
@@ -143,6 +154,7 @@ class PullbackRecorder:
         self.settings = settings if isinstance(settings, PullbackSettings) else PullbackSettings(**(settings or {}))
         self.path = self.cleaned_path = None
         self.cleaned_paths = []
+        self.filter_summaries = {}
         self._recording = False
 
     @property
@@ -156,6 +168,7 @@ class PullbackRecorder:
         # Needle names arrive with the frames; choose filenames at export.
         self.path = self.cleaned_path = None
         self.cleaned_paths = []
+        self.filter_summaries = {}
         self._streams, self._calibration = [], {}
         self._active = self._last_clock = None
         self._start_clock = time.perf_counter()
@@ -193,9 +206,10 @@ class PullbackRecorder:
         if expected is not None and abs(separation - expected) > self.settings.coil_separation_tolerance_mm:
             return False
         previous = self._active["records"][-1] if self._active and self._active["records"] else None
-        new_section = previous is None or elapsed - previous["elapsed"] > self.settings.max_gap_seconds
-        if not new_section and math.dist(previous["tip"], tip) / (elapsed - previous["elapsed"]) > self.settings.max_speed_mm_s:
-            return False
+        new_section = previous is None
+        # Decide motion validity on Stop using neighbors on both sides. A
+        # sequential 3D speed gate would let one bad frame poison the next one,
+        # and would change the approved Z-first selection before it runs.
         if len(calibration) < self.settings.calibration_samples:
             calibration.append(separation)
         record = {"elapsed": elapsed, "tip": tip, "separation": separation,
@@ -206,51 +220,35 @@ class PullbackRecorder:
         self._active["records"].append(record)
         return True
 
-    def _groups(self):
-        segment = 0
-        for stream in self._streams:
-            needle = stream["needle"]
+    def _filtered_rows(self):
+        by_needle = {}
+        for section, stream in enumerate(self._streams):
+            for record in stream["records"]:
+                by_needle.setdefault(stream["needle"], []).append((section, record))
+        for needle, records in by_needle.items():
             expected = self.settings.expected_coil_separation_mm
             calibration = self._calibration[needle]
             if expected is None and len(calibration) >= self.settings.calibration_samples:
                 expected = statistics.median(calibration)
-            parts = []
-            for record in stream["records"]:
-                if expected is not None and abs(record["separation"] - expected) > self.settings.coil_separation_tolerance_mm:
-                    continue
-                if not parts or record["elapsed"] - parts[-1][-1]["elapsed"] > self.settings.max_gap_seconds:
-                    parts.append([])
-                parts[-1].append(record)
-            filtered_parts = []
-            for candidates in parts:
-                retained = reject_motion_outliers([(r["elapsed"], r["tip"]) for r in candidates],
-                                                  window=self.settings.outlier_window,
-                                                  outlier_min_mm=self.settings.outlier_min_mm,
-                                                  outlier_sigma=self.settings.outlier_sigma)
-                times = {t for t, _ in retained}
-                part = [r for r in candidates if r["elapsed"] in times]
-                for record in part:
-                    if not filtered_parts or record["elapsed"] - filtered_parts[-1][-1]["elapsed"] > self.settings.max_gap_seconds:
-                        filtered_parts.append([])
-                    filtered_parts[-1].append(record)
-            for part in filtered_parts:
-                groups = group_measurements([(r["elapsed"], r["tip"]) for r in part],
-                                            group_samples=self.settings.group_samples,
-                                            max_group_span_mm=self.settings.max_group_span_mm,
-                                            outlier_min_mm=self.settings.outlier_min_mm,
-                                            outlier_sigma=self.settings.outlier_sigma)
-                segment += 1
-                for group in groups:
-                    stamp = part[0]["timestamp"] + timedelta(seconds=group["time"] - part[0]["elapsed"])
-                    yield [needle, stamp.strftime("%H:%M:%S.%f")[:-3],
-                           *("{:.12f}".format(v) for v in group["point"]),
-                           "grouped_v1", segment, "robust_group", group["samples_used"]]
+            valid = [(section, record) for section, record in records if expected is None or
+                     abs(record["separation"] - expected) <= self.settings.coil_separation_tolerance_mm]
+            result = filter_pullback_samples([(r["elapsed"], r["tip"]) for _, r in valid],
+                                             source_sections=[section for section, _ in valid],
+                                             **self.settings.filter_options())
+            self.filter_summaries[needle] = {"input": len(records), "geometry_retained": len(valid),
+                                            "z_retained": result["z_selected"], "xy_rejected": result["xy_rejected"],
+                                            "xy_unchecked": result["xy_unchecked"], "exported": len(result["retained"])}
+            print("Pullback {}: {}".format(needle, self.filter_summaries[needle]))
+            for sample in result["retained"]:
+                record = valid[sample["index"]][1]
+                yield [needle, record["timestamp"].strftime("%H:%M:%S.%f")[:-3],
+                       *(repr(v) for v in sample["point"])]
 
     def stop(self):
         if not self.is_recording:
             return self.cleaned_path
         self._recording = False
-        rows = list(self._groups())
+        rows = list(self._filtered_rows())
         if not rows:
             return None
         by_needle = {}
@@ -277,8 +275,11 @@ class PullbackRecorder:
                 try:
                     with handle as f:
                         writer = csv.writer(f)
-                        writer.writerow(self.HEADER)
-                        writer.writerows(needle_rows)
+                        table = [self.HEADER] + [[str(value) for value in row] for row in needle_rows]
+                        widths = [max(default, max(len(row[i]) for row in table))
+                                  for i, default in enumerate((10, 16, 18, 18, 18))]
+                        writer.writerows([value.ljust(widths[i]) if i < len(row) - 1 else value
+                                          for i, value in enumerate(row)] for row in table)
                     os.replace(temporary, destination)
                 finally:
                     if temporary.exists():

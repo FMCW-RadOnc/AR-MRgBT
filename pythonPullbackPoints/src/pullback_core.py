@@ -92,6 +92,7 @@ def read_paths(csv_paths, include_metadata=False):
         active = None
         path_type = None
         seen_segments = set()
+        last_filtered_depths = {}
         with path.open(newline="", encoding="utf-8-sig") as stream:
             reader = csv.DictReader(stream)
             if not reader.fieldnames:
@@ -110,7 +111,7 @@ def read_paths(csv_paths, include_metadata=False):
                     raise ValueError("Missing needle name at {}:{}".format(path, line))
                 segments = groups.setdefault(needle, [])
                 kind = row.get("Path Type", "").strip()
-                if kind not in ("", "centerline_v1", "grouped_v1"):
+                if kind not in ("", "centerline_v1", "grouped_v1", "filtered_v1"):
                     raise ValueError("Unknown Path Type at {}:{}".format(path, line))
                 if path_type is not None and path_type != kind:
                     raise ValueError("Cannot mix path types in {}".format(path))
@@ -126,6 +127,12 @@ def read_paths(csv_paths, include_metadata=False):
                     active = None
                     continue
                 x, y, z = xyz(values, "{} row {}".format(path.name, line))
+                if kind == "filtered_v1":
+                    if needle in last_filtered_depths and z >= last_filtered_depths[needle]:
+                        raise ValueError("Filtered depths must strictly decrease per needle, including across sections")
+                    if row.get("Samples Used", "").strip() != "1" or row.get("Sample Kind", "").strip() not in ("zxy_filtered", "xy_unchecked"):
+                        raise ValueError("Filtered rows require Samples Used=1 and zxy_filtered or xy_unchecked")
+                    last_filtered_depths[needle] = z
                 if active != key:
                     if kind and key in seen_segments:
                         raise ValueError("Prepared Segment must be contiguous")
@@ -140,7 +147,14 @@ def read_paths(csv_paths, include_metadata=False):
             if not segments:
                 raise ValueError("No valid points for {} in {}".format(needle, path))
             item = (path.stem, needle, segments)
-            result.append(item + (path_type or "",) if include_metadata else item)
+            kind = path_type or ""
+            if not kind:
+                points = [point for segment in segments for point in segment]
+                if all(b[2] < a[2] for a, b in zip(points, points[1:])):
+                    # The five-column recorder format carries the final
+                    # anchors. Do not refilter or globally move them in MIM.
+                    kind = "filtered_plain_v1"
+            result.append(item + (kind,) if include_metadata else item)
     return result
 
 
