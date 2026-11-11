@@ -403,7 +403,8 @@ class FilteredRecorderTests(CoreTests):
         rows = self.rows()
         self.assertEqual(Path(self.recorder.cleaned_path).name, "A_pullback.csv")
         self.assertEqual(len(rows), 50)
-        self.assertEqual(list(self.directory.iterdir()), [Path(self.recorder.cleaned_path)])
+        self.assertEqual(set(self.directory.iterdir()), {Path(self.recorder.cleaned_path), self.directory / "raw"})
+        self.assertEqual(self.read_rows(self.recorder.raw_paths[0]), rows)
         self.assertTrue(all(list(r) == ["Needle", "Timestamp"] + list(TRACKER_COLUMNS) and r["Timestamp"]
                             for r in rows))
         self.assertEqual([float(r["Z Tracker (mm)"]) for r in rows], [100-i for i in range(50)])
@@ -416,6 +417,11 @@ class FilteredRecorderTests(CoreTests):
         rows = self.rows()
         self.assertTrue(all(abs(float(r["X Tracker (mm)"])) < 1e-9 for r in rows))
         self.assertEqual(len(rows), 49)
+        raw = self.read_rows(self.recorder.raw_paths[0])
+        self.assertEqual(len(raw), 50)
+        self.assertEqual(float(raw[22]["X Tracker (mm)"]), 12)
+        self.assertEqual(raw[22]["Timestamp"], "12:00:02.420")
+        self.assertEqual(rows, raw[:22] + raw[23:])
 
     def test_fast_supported_pullback_preserves_all_measurements(self):
         for i in range(46):
@@ -439,15 +445,21 @@ class FilteredRecorderTests(CoreTests):
         from pullback_core import read_paths
         paths = read_paths(";".join(self.recorder.cleaned_paths), include_metadata=True)
         self.assertEqual([Path(p).name for p in self.recorder.cleaned_paths], ["A_pullback.csv", "B_pullback.csv"])
+        self.assertEqual([Path(p).name for p in self.recorder.raw_paths], ["A_pullback_raw.csv", "B_pullback_raw.csv"])
+        self.assertEqual([len(self.read_rows(p)) for p in self.recorder.raw_paths], [18, 6])
+        # Nonrecursive MIM folder import must see only the filtered exports.
+        self.assertEqual(len(read_paths(str(self.directory))), 2)
         self.assertEqual([(p[1], len(p[2]), p[3]) for p in paths], [("A", 1, "filtered_plain_v1"), ("B", 1, "filtered_plain_v1")])
 
     def test_calibration_rejects_bad_bootstrap_geometry(self):
         for i in range(12):
             self.write((4 if i == 1 else 0, 0, 100 - i), i * 0.11, separation=20 if i == 1 else 10)
         self.assertTrue(all(abs(float(r["X Tracker (mm)"])) < 1e-8 for r in self.rows()))
+        raw = self.read_rows(self.recorder.raw_paths[0])
+        self.assertEqual(len(raw), 12)
+        self.assertEqual(float(raw[1]["X Tracker (mm)"]), 4)
 
-    def test_empty_invalid_recording_and_failed_export_leave_no_files(self):
-        self.recorder.write_frame({}, "A", monotonic_seconds=0)
+    def test_empty_recording_and_failed_export_leave_no_files(self):
         self.assertIsNone(self.recorder.stop())
         self.assertEqual(list(self.directory.iterdir()), [])
         self.recorder.start()
@@ -458,6 +470,16 @@ class FilteredRecorderTests(CoreTests):
                 self.recorder.stop()
         self.assertEqual(list(self.directory.iterdir()), [])
 
+    def test_invalid_and_unsupported_recordings_still_export_raw_frames(self):
+        self.recorder.write_frame({}, "A", timestamp=datetime(2026, 10, 6, 12), monotonic_seconds=0)
+        self.assertTrue(self.write((1, 2, 3), .11))
+        self.assertIsNone(self.recorder.stop())
+        self.assertEqual(self.recorder.cleaned_paths, [])
+        raw = self.read_rows(self.recorder.raw_paths[0])
+        self.assertEqual(len(raw), 2)
+        self.assertEqual([raw[0][key] for key in TRACKER_COLUMNS], ["", "", ""])
+        self.assertEqual([float(raw[1][key]) for key in TRACKER_COLUMNS], [1, 2, 3])
+
     def test_geometry_and_timing_checked_live_but_motion_decided_on_stop(self):
         self.write((0, 0, 100), 0)
         self.assertTrue(self.write((100, 0, 99), 0.11))
@@ -466,12 +488,17 @@ class FilteredRecorderTests(CoreTests):
         for i in range(3, 14):
             self.write((0, 0, 100-i), i*.11)
         self.assertTrue(all(abs(float(r["X Tracker (mm)"])) < 1e-8 for r in self.rows()))
+        raw = self.read_rows(self.recorder.raw_paths[0])
+        self.assertEqual(len(raw), 15)
+        self.assertEqual(raw[1]["Timestamp"], raw[2]["Timestamp"])
+        self.assertEqual([raw[3][key] for key in TRACKER_COLUMNS], ["", "", ""])
 
     def test_shutdown_has_no_dependency_on_report_and_preserves_receipt_time(self):
         import base_gui
         from types import SimpleNamespace
         from unittest.mock import patch
-        recorder = SimpleNamespace(is_recording=True, cleaned_paths=["A_pullback.csv", "B_pullback.csv"], stop=MagicMock())
+        recorder = SimpleNamespace(is_recording=True, cleaned_paths=["A_pullback.csv", "B_pullback.csv"],
+                                   raw_paths=["raw/A_pullback_raw.csv"], stop=MagicMock())
         window = SimpleNamespace(pullback_recorder=recorder, pullback_button=MagicMock(),
                                  _set_pullback_button_state=MagicMock())
         with patch.object(base_gui.QMessageBox, "warning") as warning:
@@ -479,6 +506,7 @@ class FilteredRecorderTests(CoreTests):
         warning.assert_not_called()
         recorder.stop.assert_called_once()
         self.assertIn("B_pullback.csv", window.pullback_button.setToolTip.call_args.args[0])
+        self.assertIn("raw/A_pullback_raw.csv", window.pullback_button.setToolTip.call_args.args[0])
 
     def test_config_validation_and_start_stop_reset(self):
         from base_gui import PullbackSettings
@@ -488,12 +516,29 @@ class FilteredRecorderTests(CoreTests):
         self.write_run()
         first = self.recorder.stop()
         original = Path(first).read_bytes()
+        first_raw = Path(self.recorder.raw_paths[0])
+        original_raw = first_raw.read_bytes()
         self.assertEqual(self.recorder.stop(), first)
         self.recorder.start(datetime(2026, 10, 6, 12))
+        self.assertEqual(self.recorder.raw_paths, [])
         self.write_run(z=40)
         self.assertNotEqual(self.recorder.stop(), first)
         self.assertEqual(Path(self.recorder.cleaned_path).name, "A_2_pullback.csv")
         self.assertEqual(Path(first).read_bytes(), original)
+        self.assertEqual(Path(self.recorder.raw_paths[0]).name, "A_2_pullback_raw.csv")
+        self.assertEqual(first_raw.read_bytes(), original_raw)
+        self.assertEqual(len(self.read_rows(self.recorder.raw_paths[0])), 7)
+
+    def test_existing_raw_file_reserves_matching_filtered_suffix(self):
+        raw_dir = self.directory / "raw"
+        raw_dir.mkdir()
+        original = raw_dir / "A_pullback_raw.csv"
+        original.write_text("existing raw data")
+        self.write_run()
+        self.recorder.stop()
+        self.assertEqual(Path(self.recorder.cleaned_path).name, "A_2_pullback.csv")
+        self.assertEqual(Path(self.recorder.raw_paths[0]).name, "A_2_pullback_raw.csv")
+        self.assertEqual(original.read_text(), "existing raw data")
 
     def test_unsafe_and_colliding_names_stay_in_output_folder(self):
         for i, needle in enumerate(("../DW:02", "DW/02", "DW\\02")):
@@ -520,6 +565,23 @@ class FilteredRecorderTests(CoreTests):
                 self.recorder.stop()
         self.assertEqual(list(self.directory.iterdir()), [])
         self.assertEqual(self.recorder.cleaned_paths, [])
+        self.assertEqual(self.recorder.raw_paths, [])
+
+    def test_failed_raw_export_rolls_back_filtered_file(self):
+        self.write_run()
+        import base_gui
+        from unittest.mock import patch
+        replace = base_gui.os.replace
+        def fail_raw(source, destination):
+            if Path(destination).parent.name == "raw":
+                raise OSError("raw export failed")
+            replace(source, destination)
+        with patch("base_gui.os.replace", side_effect=fail_raw):
+            with self.assertRaises(OSError):
+                self.recorder.stop()
+        self.assertEqual(list(self.directory.iterdir()), [])
+        self.assertEqual(self.recorder.cleaned_paths, [])
+        self.assertEqual(self.recorder.raw_paths, [])
 
 
 class Point:

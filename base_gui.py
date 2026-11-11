@@ -143,7 +143,7 @@ class PullbackSettings:
 
 
 class PullbackRecorder:
-    """Keep acquisition frames in memory; export unchanged Z/X/Y-filtered rows."""
+    """Keep acquisition frames in memory; export raw and Z/X/Y-filtered rows."""
     HEADER = ["Needle", "Timestamp", "X Tracker (mm)", "Y Tracker (mm)", "Z Tracker (mm)"]
 
     def __init__(self, output_dir=PULLBACK_OUTPUT_DIR, tip_offset_mm=10.0, settings=None):
@@ -154,6 +154,7 @@ class PullbackRecorder:
         self.settings = settings if isinstance(settings, PullbackSettings) else PullbackSettings(**(settings or {}))
         self.path = self.cleaned_path = None
         self.cleaned_paths = []
+        self.raw_paths = []
         self.filter_summaries = {}
         self._recording = False
 
@@ -168,7 +169,9 @@ class PullbackRecorder:
         # Needle names arrive with the frames; choose filenames at export.
         self.path = self.cleaned_path = None
         self.cleaned_paths = []
+        self.raw_paths = []
         self.filter_summaries = {}
+        self._raw_rows = {}
         self._streams, self._calibration = [], {}
         self._active = self._last_clock = None
         self._start_clock = time.perf_counter()
@@ -178,6 +181,18 @@ class PullbackRecorder:
     def write_frame(self, coil_measurements, needle_name, timestamp=None, monotonic_seconds=None):
         if not self.is_recording:
             return False
+        needle = str(needle_name or "").strip()
+        timestamp = timestamp or datetime.now().astimezone()
+        try:
+            tip, separation = calculate_tracker_tip(coil_measurements["RX1"], coil_measurements["RX2"], self.tip_offset_mm)
+        except (KeyError, TypeError):
+            tip, separation = None, math.nan
+        # Preserve every named frame before timing, spacing, or motion gates.
+        # Missing/invalid geometry has no calculable tip; retain a blank XYZ row.
+        if needle:
+            coordinates = [repr(v) for v in tip] if tip is not None else ["", "", ""]
+            self._raw_rows.setdefault(needle, []).append(
+                [needle, timestamp.strftime("%H:%M:%S.%f")[:-3], *coordinates])
         try:
             clock = time.perf_counter() if monotonic_seconds is None else float(monotonic_seconds)
         except (TypeError, ValueError, OverflowError):
@@ -188,14 +203,9 @@ class PullbackRecorder:
             self._start_clock = clock
         self._last_clock = clock
         elapsed = clock - self._start_clock
-        needle = str(needle_name or "").strip()
         if self._active and self._active["needle"] != needle:
             self._active = None
         if not needle:
-            return False
-        try:
-            tip, separation = calculate_tracker_tip(coil_measurements["RX1"], coil_measurements["RX2"], self.tip_offset_mm)
-        except (KeyError, TypeError):
             return False
         if tip is None:
             return False
@@ -213,7 +223,7 @@ class PullbackRecorder:
         if len(calibration) < self.settings.calibration_samples:
             calibration.append(separation)
         record = {"elapsed": elapsed, "tip": tip, "separation": separation,
-                  "timestamp": timestamp or datetime.now().astimezone()}
+                  "timestamp": timestamp}
         if new_section:
             self._active = {"needle": needle, "records": []}
             self._streams.append(self._active)
@@ -249,26 +259,34 @@ class PullbackRecorder:
             return self.cleaned_path
         self._recording = False
         rows = list(self._filtered_rows())
-        if not rows:
-            return None
         by_needle = {}
         for row in rows:
             by_needle.setdefault(row[0], []).append(row)
         destinations, reserved = [], set()
-        for needle, needle_rows in by_needle.items():
+        raw_dir = self.output_dir / "raw"
+        for needle, raw_rows in self._raw_rows.items():
             name = "".join("_" if ord(c) < 32 or c in '<>:"/\\|?*' else c for c in needle)
             name = name.rstrip(" .")[:180] or "Needle"
             stem, suffix = name, 2
             destination = self.output_dir / (stem + "_pullback.csv")
+            raw_destination = raw_dir / (stem + "_pullback_raw.csv")
             while (destination.exists() or Path(str(destination) + ".tmp").exists()
+                   or raw_destination.exists() or Path(str(raw_destination) + ".tmp").exists()
                    or destination.name.casefold() in reserved):
                 stem = "{}_{}".format(name, suffix)
                 suffix += 1
                 destination = self.output_dir / (stem + "_pullback.csv")
+                raw_destination = raw_dir / (stem + "_pullback_raw.csv")
             reserved.add(destination.name.casefold())
-            destinations.append((destination, needle_rows))
+            if needle in by_needle:
+                destinations.append((destination, by_needle[needle]))
+            destinations.append((raw_destination, raw_rows))
         exported = []
+        created_raw_dir = False
         try:
+            if destinations and not raw_dir.exists():
+                raw_dir.mkdir()
+                created_raw_dir = True
             for destination, needle_rows in destinations:
                 temporary = Path(str(destination) + ".tmp")
                 handle = temporary.open("x", newline="", encoding="utf-8")
@@ -288,9 +306,12 @@ class PullbackRecorder:
         except Exception:
             for destination in exported:
                 destination.unlink()
+            if created_raw_dir:
+                raw_dir.rmdir()
             raise
-        self.cleaned_paths = [str(destination) for destination in exported]
-        self.path = self.cleaned_path = self.cleaned_paths[0]
+        self.cleaned_paths = [str(destination) for destination in exported if destination.parent == self.output_dir]
+        self.raw_paths = [str(destination) for destination in exported if destination.parent == raw_dir]
+        self.path = self.cleaned_path = self.cleaned_paths[0] if self.cleaned_paths else None
         return self.cleaned_path
 
 
@@ -978,14 +999,14 @@ class TrackingGUIWindow(QMainWindow):
         try:
             self.pullback_recorder.stop()
         except (OSError, ValueError) as error:
-            message = f"A cleaned centerline could not be exported:\n{error}"
+            message = f"The pullback CSV files could not be exported:\n{error}"
             if show_summary:
                 QMessageBox.warning(self, "Pullback Cleanup Failed", message)
             else:
                 print(message)
         finally:
             self._set_pullback_button_state(False)
-        result = "\n".join(self.pullback_recorder.cleaned_paths) or "No valid centerline exported"
+        result = "\n".join(self.pullback_recorder.cleaned_paths + self.pullback_recorder.raw_paths) or "No pullback data exported"
         self.pullback_button.setToolTip(f"{result}\nPress Tab to start or stop pullback recording")
 
     def keyPressEvent(self, event):

@@ -31,6 +31,11 @@ new recorder's `<Needle>_pullback.csv` files in `MIMData`, one per needle.
 For example, `DW02_pullback.csv`; repeats use `DW02_2_pullback.csv` to preserve
 existing files. New files contain only `Needle`, `Timestamp`, `X Tracker (mm)`, `Y Tracker (mm)`, and `Z Tracker (mm)`. Coordinates must be finite. Unmarked files whose Z strictly decreases per needle across the complete file are treated as final anchors; no filename pattern or metadata columns are required. The importer cannot infer whether a monotone file was filtered, so use the recorder's exports or the reviewed comparison CSVs. Other unmarked files retain the legacy global fit. A singleton also remains at its original coordinate.
 
+The recorder also saves unfiltered measurements to `MIMData/raw/<Needle>_pullback_raw.csv`.
+Use the filtered files in `MIMData` for contour import. Folder import is nonrecursive,
+so the new raw subfolder is excluded automatically. Raw recordings include rejected
+measurements and may contain blank coordinates for frames with unusable geometry.
+
 Timestamps do not split five-column paths. Needle changes and missing coordinates within a file still split paths. Use separate recordings for separate withdrawals. Older `filtered_v1` metadata is still validated, including its strict decreasing Z and one-original-sample labels; its explicit sections remain separate.
 
 Earlier `_cleaned.csv` recordings remain supported. Older `grouped_v1` sections
